@@ -1,0 +1,12 @@
+{
+  "name": "default",
+  "description": "Default research preset",
+  "skills": [
+    "market-research",
+    "competitor-research",
+    "opportunity-analysis"
+  ],
+  "plugins": [
+    "product-research"
+  ]
+}

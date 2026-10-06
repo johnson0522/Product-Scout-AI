@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "allowJs": false,
+    "checkJs": false,
+    "jsx": "react-jsx",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": ".",
+    "paths": {
+      "@product-scout/domain": ["packages/domain/src"],
+      "@product-scout/domain/*": ["packages/domain/src/*"],
+      "@product-scout/db": ["packages/db/src"],
+      "@product-scout/db/*": ["packages/db/src/*"],
+      "@product-scout/agent-sdk": ["packages/agent-sdk/src"],
+      "@product-scout/agent-sdk/*": ["packages/agent-sdk/src/*"],
+      "@product-scout/research": ["packages/research/src"],
+      "@product-scout/research/*": ["packages/research/src/*"],
+      "@product-scout/evidence": ["packages/evidence/src"],
+      "@product-scout/evidence/*": ["packages/evidence/src/*"],
+      "@product-scout/ui": ["packages/ui/src"],
+      "@product-scout/ui/*": ["packages/ui/src/*"],
+      "@product-scout/config": ["packages/config/src"],
+      "@product-scout/config/*": ["packages/config/src/*"]
+    },
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node", "@types/react", "@types/react-dom"]
+  },
+  "include": ["dsh/**/*.ts", "tests/**/*.ts", "*.config.ts"],
+  "exclude": ["node_modules", "dist", "build", ".next", "coverage"]
+}

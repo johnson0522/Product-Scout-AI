@@ -1,0 +1,21 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+minimumReleaseAge: 0
+verifyDepsBeforeRun: false
+confirmModulesPurge: false
+
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': false
+  es5-ext: true
+  esbuild: true
+  koffi: true
+  node-pty: true
+  protobufjs: false
+
+onlyBuiltDependencies:
+  - "@biomejs/biome"
+  - "esbuild"
+  - "es5-ext"

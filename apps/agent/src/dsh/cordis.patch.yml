@@ -1,0 +1,9 @@
+- id: persistent-bash
+  disabled: true
+
+- id: persistent-pwsh
+  disabled: true
+
+- insert:
+    - id: product-scout-echo-tool
+      name: './apps/agent/src/dsh/echo-tool.mjs'

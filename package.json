@@ -1,0 +1,37 @@
+{
+  "name": "product-scout",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered product research and opportunity analysis platform",
+  "packageManager": "pnpm@11.24.0",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "test": "turbo test && vitest run",
+    "typecheck": "turbo typecheck && tsc --noEmit",
+    "clean": "turbo clean",
+    "db:generate": "pnpm --filter @product-scout/db generate",
+    "db:push": "pnpm --filter @product-scout/db push",
+    "db:studio": "pnpm --filter @product-scout/db studio"
+  },
+  "devDependencies": {
+    "@eslint/js": "^8.57.0",
+    "@playwright/test": "^1.42.1",
+    "@typescript-eslint/eslint-plugin": "^7.1.1",
+    "@typescript-eslint/parser": "^7.1.1",
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.19",
+    "eslint": "^8.56.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "prettier": "^3.2.0",
+    "vitest": "^1.3.1",
+    "turbo": "^2.0.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}

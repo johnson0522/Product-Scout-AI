@@ -1,0 +1,13 @@
+{
+  "version": "5",
+  "dialect": "pg",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1791287328762,
+      "tag": "0000_fearless_longshot",
+      "breakpoints": true
+    }
+  ]
+}
