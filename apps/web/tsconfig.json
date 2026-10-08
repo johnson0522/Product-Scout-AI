@@ -21,6 +21,21 @@
       ],
       "@product-scout/domain/*": [
         "../../packages/domain/src/*"
+      ],
+      "@product-scout/db": [
+        "../../packages/db/src"
+      ],
+      "@product-scout/agent-sdk": [
+        "../../packages/agent-sdk/src"
+      ],
+      "@product-scout/research": [
+        "../../packages/research/src"
+      ],
+      "@product-scout/agent": [
+        "../../apps/agent/src/index.ts"
+      ],
+      "@product-scout/agent/runtime-factory": [
+        "../../apps/agent/src/runtime/DeepSeekHarnessRuntimeFactory.ts"
       ]
     },
     "noEmit": true,

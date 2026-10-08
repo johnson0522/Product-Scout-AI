@@ -1,8 +1,12 @@
-import { eq } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, max, sql } from 'drizzle-orm';
+import {
+  AgentSessionBindingConflictError,
+} from '@product-scout/domain';
 import type {
   Evidence,
   Opportunity,
   OpportunityScore,
+  ProductEvent,
   Project,
   ResearchRun,
   ResearchStep,
@@ -17,6 +21,7 @@ import type {
   ProjectCreateInput,
   ProjectRepository,
   ProjectUpdateInput,
+  ProductEventRepository,
   ResearchRunCreateInput,
   ResearchRunRepository,
   ResearchRunUpdateInput,
@@ -31,6 +36,7 @@ import {
   projects,
   researchRuns,
   researchSteps,
+  productEvents,
   sources,
 } from './schema';
 
@@ -41,6 +47,8 @@ type SourceRow = typeof sources.$inferSelect;
 type EvidenceRow = typeof evidence.$inferSelect;
 type OpportunityRow = typeof opportunities.$inferSelect;
 type OpportunityScoreRow = typeof opportunityScores.$inferSelect;
+type ProductEventRow = typeof productEvents.$inferSelect;
+type StoredProductEvent = ProductEvent & { readonly sequenceNumber: number };
 
 function firstOrThrow<T>(rows: readonly T[], entity: string): T {
   const row = rows[0];
@@ -95,6 +103,8 @@ function mapResearchRun(row: ResearchRunRow, steps: readonly ResearchStep[]): Re
     goal: row.goal,
     constraints: row.constraints ?? undefined,
     status: row.status,
+    agentSessionId: row.agentSessionId,
+    runtimeMetadata: row.runtimeMetadata,
     steps,
     createdAt: row.createdAt,
     startedAt: row.startedAt ?? undefined,
@@ -201,6 +211,7 @@ export class DrizzleResearchRunRepository implements ResearchRunRepository {
       goal: input.goal,
       constraints: input.constraints,
       agentSessionId: input.agentSessionId,
+      runtimeMetadata: input.runtimeMetadata,
     }).returning();
     return mapResearchRun(firstOrThrow(rows, 'research run'), []);
   }
@@ -209,7 +220,104 @@ export class DrizzleResearchRunRepository implements ResearchRunRepository {
     const rows = await this.db.update(researchRuns).set({ ...input, updatedAt: new Date() }).where(eq(researchRuns.id, id)).returning();
     return rows[0] ? this.withSteps(rows[0]) : null;
   }
+
+  public async bindAgentSession(
+    id: ResearchRun['id'],
+    agentSessionId: string,
+    runtimeMetadata: Readonly<Record<string, string>>,
+  ): Promise<ResearchRun> {
+    const currentRows = await this.db.select().from(researchRuns).where(eq(researchRuns.id, id)).limit(1);
+    const current = currentRows[0];
+    if (!current) {
+      throw new Error('Research run not found: ' + id);
+    }
+    if (current.agentSessionId !== null && current.agentSessionId !== agentSessionId) {
+      throw new AgentSessionBindingConflictError(id, current.agentSessionId, agentSessionId);
+    }
+    if (current.agentSessionId === agentSessionId) {
+      return this.withSteps(current);
+    }
+    const rows = await this.db.update(researchRuns)
+      .set({ agentSessionId, runtimeMetadata, updatedAt: new Date() })
+      .where(and(eq(researchRuns.id, id), isNull(researchRuns.agentSessionId)))
+      .returning();
+    if (rows[0]) {
+      return this.withSteps(rows[0]);
+    }
+
+    const afterRows = await this.db.select().from(researchRuns)
+      .where(eq(researchRuns.id, id))
+      .limit(1);
+    const after = afterRows[0];
+    if (!after) {
+      throw new Error('Research run not found: ' + id);
+    }
+    if (after.agentSessionId === agentSessionId) {
+      return this.withSteps(after);
+    }
+    throw new AgentSessionBindingConflictError(id, after.agentSessionId ?? '', agentSessionId);
+  }
 }
+
+export class DrizzleProductEventStore implements ProductEventRepository {
+  public constructor(private readonly db: Database) {}
+
+  public async append(event: ProductEvent): Promise<void> {
+    await this.db.transaction(async (transaction) => {
+      await transaction.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${event.researchRunId}))`,
+      );
+      const existing = await transaction.select({ id: productEvents.id })
+        .from(productEvents)
+        .where(and(
+          eq(productEvents.researchRunId, event.researchRunId),
+          eq(productEvents.eventId, event.eventId),
+        ))
+        .limit(1);
+      if (existing[0]) {
+        return;
+      }
+
+      const sequenceRows = await transaction.select({ sequence: max(productEvents.sequenceNumber) })
+        .from(productEvents)
+        .where(eq(productEvents.researchRunId, event.researchRunId));
+      const sequence = (sequenceRows[0]?.sequence ?? 0) + 1;
+      await transaction.insert(productEvents).values({
+        researchRunId: event.researchRunId,
+        eventId: event.eventId,
+        eventType: event.type,
+        sequenceNumber: sequence,
+        occurredAt: event.occurredAt,
+        payload: event,
+      });
+    });
+  }
+
+  public async listByResearchRunId(
+    researchRunId: ProductEvent['researchRunId'],
+    afterSequenceNumber?: number,
+  ): Promise<readonly StoredProductEvent[]> {
+    const condition = afterSequenceNumber === undefined
+      ? eq(productEvents.researchRunId, researchRunId)
+      : and(
+        eq(productEvents.researchRunId, researchRunId),
+        gt(productEvents.sequenceNumber, afterSequenceNumber),
+      );
+    const rows: readonly ProductEventRow[] = await this.db.select()
+      .from(productEvents)
+      .where(condition)
+      .orderBy(asc(productEvents.sequenceNumber));
+    return rows.map((row) => ({
+      ...row.payload,
+      eventId: row.eventId,
+      researchRunId: row.researchRunId,
+      occurredAt: row.occurredAt,
+      sequenceNumber: row.sequenceNumber,
+    }));
+  }
+}
+
+export { DrizzleProductEventStore as DrizzleProductEventRepository };
 
 export class DrizzleSourceRepository implements SourceRepository {
   public constructor(private readonly db: Database) {}

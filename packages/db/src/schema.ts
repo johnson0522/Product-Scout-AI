@@ -1,11 +1,13 @@
 import { relations, sql } from 'drizzle-orm';
 import type {
   OpportunityScoreBreakdown,
+  ProductEvent,
   ResearchConstraints,
   ValidationPlanDay,
 } from '@product-scout/domain';
 import {
   check,
+  integer,
   jsonb,
   pgEnum,
   pgTable,
@@ -55,12 +57,27 @@ export const researchRuns = pgTable('research_runs', {
   constraints: jsonb('constraints').$type<ResearchConstraints>(),
   status: researchRunStatusEnum('status').notNull().default('pending'),
   agentSessionId: varchar('agent_session_id', { length: 255 }),
+  runtimeMetadata: jsonb('runtime_metadata').$type<Readonly<Record<string, string>>>(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   startedAt: timestamp('started_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
   errorMessage: text('error_message'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const productEvents = pgTable('product_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  researchRunId: uuid('research_run_id').notNull().references(() => researchRuns.id, { onDelete: 'cascade' }),
+  eventId: text('event_id').notNull(),
+  eventType: varchar('event_type', { length: 100 }).notNull(),
+  sequenceNumber: integer('sequence_number').notNull(),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+  payload: jsonb('payload').$type<ProductEvent>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  eventIdentityUnique: uniqueIndex('product_events_run_event_idx').on(table.researchRunId, table.eventId),
+  eventSequenceUnique: uniqueIndex('product_events_run_sequence_idx').on(table.researchRunId, table.sequenceNumber),
+}));
 
 export const researchSteps = pgTable('research_steps', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -147,7 +164,10 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
 }));
 export const researchRunsRelations = relations(researchRuns, ({ one, many }) => ({
   project: one(projects, { fields: [researchRuns.projectId], references: [projects.id] }),
-  steps: many(researchSteps), evidence: many(evidence), opportunities: many(opportunities), validationPlans: many(validationPlans),
+  steps: many(researchSteps), evidence: many(evidence), opportunities: many(opportunities), validationPlans: many(validationPlans), productEvents: many(productEvents),
+}));
+export const productEventsRelations = relations(productEvents, ({ one }) => ({
+  researchRun: one(researchRuns, { fields: [productEvents.researchRunId], references: [researchRuns.id] }),
 }));
 export const researchStepsRelations = relations(researchSteps, ({ one }) => ({
   researchRun: one(researchRuns, { fields: [researchSteps.researchRunId], references: [researchRuns.id] }),

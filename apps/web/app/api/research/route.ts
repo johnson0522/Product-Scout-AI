@@ -1,9 +1,6 @@
-import { NextResponse } from 'next/server';
+import { getAgentGateway } from '../../../lib/agent-gateway';
+import { createResearchPostHandler } from './handler';
 
-export async function POST() {
-  return NextResponse.json({ error: 'Research API is not implemented' }, { status: 501 });
-}
+export const runtime = 'nodejs';
 
-export async function GET() {
-  return NextResponse.json({ error: 'Research API is not implemented' }, { status: 501 });
-}
+export const POST = createResearchPostHandler(getAgentGateway);

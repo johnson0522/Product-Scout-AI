@@ -8,6 +8,13 @@
       "when": 1791287328762,
       "tag": "0000_fearless_longshot",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1791353027694,
+      "tag": "0001_modern_valkyrie",
+      "breakpoints": true
     }
   ]
 }

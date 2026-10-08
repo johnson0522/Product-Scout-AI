@@ -133,6 +133,37 @@ evidence_store
 
 Tools should be atomic.
 
+V0.1-C1 establishes the replaceable search boundary:
+
+```text
+SearchTool -> SearchProvider -> MockSearchProvider -> SearchResult
+```
+
+SearchTool validates agent input and emits the existing tool lifecycle events.
+The provider only returns raw search results; it does not create or persist
+Evidence. The initial mock provider is deterministic and performs no network
+requests.
+
+V0.1-C2-A defines the evidence boundary without adding persistence:
+
+```text
+SearchResult (tool output)
+        ↓  C2-C conversion, not yet implemented
+Evidence
+  ├── EvidenceId
+  ├── EvidenceSource.url
+  ├── title
+  ├── excerpt
+  └── retrievedAt
+        ↑
+Claim.evidenceRefs[] -> EvidenceId
+```
+
+`SearchResult` is not `Evidence`. Evidence preserves an original source
+excerpt and its retrieval timestamp; it is not an LLM summary. An
+`EvidenceReference` contains only an `EvidenceId`, never a duplicated evidence
+snapshot. Core evidence fields are readonly by contract.
+
 Example:
 ```TypeScript
 interface SearchProvider {
@@ -200,11 +231,21 @@ PostgreSQL stores business-level information.
 
 DSH stores runtime execution state.
 
-The product should store:
-```Text
-agent_session_id
-```
-but should not replicate the entire runtime state.
+The product should store the nullable agent_session_id runtime binding, but
+should not replicate the entire runtime state.
+
+Research runs persist this binding idempotently. Rebinding the same session is
+allowed; binding a different session is rejected.
+
+Product-level runtime events are persisted in PostgreSQL through a
+ProductEventStore. Events retain their event id, type, payload, occurrence time,
+and per-research-run sequence for stable replay and future streaming transports.
+
+The V0.1-B2 event stream uses PostgreSQL as the durable source of truth and a
+process-local LiveEventPublisher only for low-latency notifications. The SSE
+endpoint subscribes before replaying durable events, uses Last-Event-ID as the
+per-run sequence cursor, deduplicates replay/live overlap, and closes after a
+completed, failed, or cancelled run reaches its terminal event.
 
 ## 11. Research Limits
 ```Text

@@ -1,6 +1,7 @@
 import type {
   Evidence,
   Opportunity,
+  ProductEvent,
   Project,
   ResearchConstraints,
   ResearchRun,
@@ -26,19 +27,30 @@ export interface ProjectRepository {
 export type ResearchRunCreateInput = Pick<ResearchRun, 'projectId' | 'goal'> & {
   readonly constraints?: ResearchConstraints;
   readonly agentSessionId?: string;
+  readonly runtimeMetadata?: Readonly<Record<string, string>>;
 };
 
 export type ResearchRunUpdateInput = Partial<
   Pick<ResearchRun, 'status' | 'startedAt' | 'completedAt' | 'errorMessage'>
-> & {
-  readonly agentSessionId?: string;
-};
+>;
 
 export interface ResearchRunRepository {
   findById(id: ResearchRun['id']): Promise<ResearchRun | null>;
   listByProjectId(projectId: ResearchRun['projectId']): Promise<readonly ResearchRun[]>;
   create(input: ResearchRunCreateInput): Promise<ResearchRun>;
   update(id: ResearchRun['id'], input: ResearchRunUpdateInput): Promise<ResearchRun | null>;
+  bindAgentSession(
+    id: ResearchRun['id'],
+    agentSessionId: string,
+    runtimeMetadata: Readonly<Record<string, string>>,
+  ): Promise<ResearchRun>;
+}
+
+export interface ProductEventRepository {
+  append(event: ProductEvent): Promise<void>;
+  listByResearchRunId(
+    researchRunId: ProductEvent['researchRunId'],
+  ): Promise<readonly ProductEvent[]>;
 }
 
 export type SourceCreateInput = Pick<Source, 'type' | 'url' | 'retrievedAt'> & {

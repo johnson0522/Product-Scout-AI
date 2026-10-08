@@ -84,6 +84,12 @@ importers:
 
   apps/web:
     dependencies:
+      '@product-scout/agent':
+        specifier: workspace:*
+        version: link:../agent
+      '@product-scout/agent-sdk':
+        specifier: workspace:*
+        version: link:../../packages/agent-sdk
       '@product-scout/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -93,6 +99,9 @@ importers:
       '@product-scout/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@product-scout/research':
+        specifier: workspace:*
+        version: link:../../packages/research
       '@product-scout/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -193,6 +202,9 @@ importers:
 
   packages/research:
     dependencies:
+      '@product-scout/agent-sdk':
+        specifier: workspace:*
+        version: link:../agent-sdk
       '@product-scout/domain':
         specifier: workspace:*
         version: link:../domain

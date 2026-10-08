@@ -63,11 +63,75 @@ export interface ResearchRun {
   readonly goal: string;
   readonly constraints?: ResearchConstraints;
   readonly status: ResearchRunStatus;
+  readonly agentSessionId: string | null;
+  readonly runtimeMetadata: Readonly<Record<string, string>> | null;
   readonly steps: readonly ResearchStep[];
   readonly createdAt: Date;
   readonly startedAt?: Date;
   readonly completedAt?: Date;
   readonly errorMessage?: string;
+}
+
+export interface ProductEventBase {
+  readonly eventId: string;
+  readonly researchRunId: ResearchRunId;
+  readonly occurredAt: Date;
+}
+
+export type ProductEvent =
+  | (ProductEventBase & { readonly type: 'research.started' })
+  | (ProductEventBase & {
+      readonly type: 'research.step.started';
+      readonly stepId: ResearchStepId;
+      readonly stepType: ResearchStepType;
+    })
+  | (ProductEventBase & {
+      readonly type: 'research.tool.started';
+      readonly toolInvocationId: string;
+      readonly toolName: string;
+    })
+  | (ProductEventBase & {
+      readonly type: 'research.tool.completed';
+      readonly toolInvocationId: string;
+      readonly toolName: string;
+      readonly success: boolean;
+      readonly errorMessage?: string;
+    })
+  | (ProductEventBase & {
+      readonly type: 'research.evidence.created';
+      readonly evidenceId: EvidenceId;
+      readonly sourceId: SourceId;
+    })
+  | (ProductEventBase & {
+      readonly type: 'research.step.completed';
+      readonly stepId: ResearchStepId;
+      readonly stepType: ResearchStepType;
+      readonly success: boolean;
+      readonly errorMessage?: string;
+    })
+  | (ProductEventBase & {
+      readonly type: 'research.opportunity.created';
+      readonly opportunityId: OpportunityId;
+    })
+  | (ProductEventBase & { readonly type: 'research.completed' })
+  | (ProductEventBase & { readonly type: 'research.cancelled' })
+  | (ProductEventBase & {
+      readonly type: 'research.failed';
+      readonly errorMessage: string;
+      readonly recoverable: boolean;
+    });
+
+export class AgentSessionBindingConflictError extends Error {
+  public constructor(
+    public readonly researchRunId: ResearchRunId,
+    public readonly existingSessionId: string,
+    public readonly requestedSessionId: string,
+  ) {
+    super(
+      `Research run ${researchRunId} is already bound to agent session ${existingSessionId}`,
+    );
+    this.name = 'AgentSessionBindingConflictError';
+  }
 }
 
 /** @deprecated Use ResearchRun for new code. */

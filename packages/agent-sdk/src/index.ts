@@ -12,6 +12,7 @@ import type {
 export type AgentSessionId = string;
 export type AgentEventId = string;
 export type ToolInvocationId = string;
+export type AgentRuntimeMetadata = Readonly<Record<string, string>>;
 
 export type AgentSessionStatus = 'created' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type AgentRunStatus = 'completed' | 'failed' | 'cancelled';
@@ -129,4 +130,10 @@ export interface AgentRuntime {
   resume(sessionId: AgentSessionId): Promise<AgentRunResult>;
   cancel(sessionId: AgentSessionId): Promise<void>;
   getTrajectory(sessionId: AgentSessionId): Promise<AgentTrajectory>;
+}
+
+/** Creates runtime instances without exposing a concrete runtime to consumers. */
+export interface AgentRuntimeFactory {
+  readonly metadata: AgentRuntimeMetadata;
+  create(): Promise<AgentRuntime>;
 }

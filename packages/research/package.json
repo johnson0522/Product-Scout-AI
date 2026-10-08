@@ -15,6 +15,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@product-scout/agent-sdk": "workspace:*",
     "@product-scout/domain": "workspace:*",
     "@product-scout/evidence": "workspace:*"
   },

@@ -11,8 +11,11 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@product-scout/agent": "workspace:*",
+    "@product-scout/agent-sdk": "workspace:*",
     "@product-scout/domain": "workspace:*",
     "@product-scout/db": "workspace:*",
+    "@product-scout/research": "workspace:*",
     "@product-scout/ui": "workspace:*",
     "@product-scout/config": "workspace:*",
     "next": "14.1.0",
