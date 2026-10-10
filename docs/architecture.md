@@ -148,7 +148,7 @@ V0.1-C2-A defines the evidence boundary without adding persistence:
 
 ```text
 SearchResult (tool output)
-        ↓  C2-C conversion, not yet implemented
+        ↓  C2-C explicit mapping and persistence integration
 Evidence
   ├── EvidenceId
   ├── EvidenceSource.url
@@ -303,3 +303,47 @@ Queue / Workers
 ```
 
 only when real usage justifies it.
+### Evidence Store (V0.1-C2-B)
+
+The C2 evidence persistence boundary is deliberately separate from the
+older research-run-scoped `evidence` table:
+
+```text
+Evidence Domain
+      ↓
+EvidenceRepository (`packages/evidence`)
+      ↓
+DrizzleEvidenceStoreRepository (`packages/db`)
+      ↓
+evidence_store (PostgreSQL)
+```
+
+The repository creates validated Evidence objects and reads them back by
+EvidenceId. It preserves the source URL, optional source metadata, title,
+excerpt, and retrieval timestamp. Database rows are rehydrated through the
+Evidence factory so invalid stored data is not silently repaired. C2-B does
+not convert SearchResult to Evidence, persist claims, or implement evidence
+analysis. No real PostgreSQL integration test is assumed unless the configured
+PostgreSQL environment is available.
+
+### Search Result Evidence Ingestion (V0.1-C2-C)
+
+```text
+SearchTool.execute
+      ↓
+SearchResult.items
+      ↓
+SearchResultEvidenceMapper
+      ↓
+createEvidence
+      ↓
+EvidenceRepository.create
+```
+
+The application mapping layer lives in `packages/research`. It maps each
+result title, URL, and snippet to an Evidence title, source, and excerpt. The
+application layer generates the EvidenceId with `crypto.randomUUID()` and
+captures `retrievedAt` at the ingestion boundary. Tests inject deterministic
+ID and time providers. Results are processed independently: mapping and
+persistence failures are reported per item, later items continue, and no
+batch transaction or URL deduplication is implied.

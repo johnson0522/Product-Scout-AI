@@ -121,6 +121,19 @@ export const evidence = pgTable('evidence', {
   confidenceRange: check('evidence_confidence_score_range', sql`${table.confidenceScore} between 0 and 100`),
 }));
 
+/**
+ * C2 evidence records. The earlier `evidence` table is retained for the
+ * research-run-scoped domain contract established before the C2 model.
+ */
+export const evidenceStore = pgTable('evidence_store', {
+  id: text('id').primaryKey(),
+  sourceUrl: text('source_url').notNull(),
+  sourceTitle: text('source_title'),
+  sourceDomain: text('source_domain'),
+  title: text('title').notNull(),
+  excerpt: text('excerpt').notNull(),
+  retrievedAt: timestamp('retrieved_at', { withTimezone: true }).notNull(),
+});
 export const opportunities = pgTable('opportunities', {
   id: uuid('id').defaultRandom().primaryKey(),
   researchRunId: uuid('research_run_id').notNull().references(() => researchRuns.id, { onDelete: 'cascade' }),

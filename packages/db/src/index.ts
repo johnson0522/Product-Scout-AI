@@ -17,3 +17,4 @@ export { schema };
 export * from './schema';
 export * from './repositories';
 export * from './drizzle-repositories';
+export * from './drizzle-evidence-store';

@@ -11,10 +11,12 @@
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --max-warnings 0",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:integration": "node ../../scripts/assert-test-db.mjs && vitest run tests/postgres.integration.test.ts"
   },
   "dependencies": {
     "@product-scout/domain": "workspace:*",
+    "@product-scout/evidence": "workspace:*",
     "drizzle-orm": "^0.29.0",
     "postgres": "^3.4.0"
   },
