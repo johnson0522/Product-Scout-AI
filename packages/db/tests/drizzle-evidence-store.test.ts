@@ -54,15 +54,15 @@ describe('DrizzleEvidenceStoreRepository (mock-based)', () => {
     await expect(repository.create(evidence)).resolves.toBeUndefined();
 
     expect(database.insert).toHaveBeenCalledWith(evidenceStore);
-    expect(database.values).toHaveBeenCalledWith({
+    expect(database.values).toHaveBeenCalledWith(expect.objectContaining({
       id: evidence.id,
       sourceUrl: evidence.source.url,
       sourceTitle: evidence.source.title,
       sourceDomain: evidence.source.domain,
       title: evidence.title,
       excerpt: evidence.excerpt,
-      retrievedAt: evidence.retrievedAt,
-    });
+    }));
+    expect(database.values.mock.calls[0]?.[0].retrievedAt).toBeDefined();
   });
 
   it('rehydrates a valid domain object and preserves all source and evidence fields', async () => {

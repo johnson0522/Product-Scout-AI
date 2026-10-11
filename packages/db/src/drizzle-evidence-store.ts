@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import {
   createEvidence,
   type Evidence,
@@ -37,7 +37,10 @@ export class DrizzleEvidenceStoreRepository implements EvidenceRepository {
       sourceDomain: evidence.source.domain,
       title: evidence.title,
       excerpt: evidence.excerpt,
-      retrievedAt: evidence.retrievedAt,
+      // Drizzle 0.29 maps Date values through toUTCString(), which drops
+      // milliseconds. Bind the ISO value as SQL so timestamptz preserves the
+      // Evidence retrieval timestamp semantics.
+      retrievedAt: sql`${evidence.retrievedAt.toISOString()}`,
     });
   }
 

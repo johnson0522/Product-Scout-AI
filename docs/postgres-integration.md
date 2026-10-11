@@ -37,8 +37,9 @@ pnpm db:test:integration
 
 On PowerShell, set the two variables with `$env:...` before running the same
 commands. The migration runner sets `DATABASE_URL` only for its validated test
-target. Integration scripts fail before Vitest if the marker, protocol, host,
-port, or database name does not match the dedicated target.
+target and applies the checked-in SQL files through Drizzle's PostgreSQL
+migrator. Integration scripts fail before Vitest if the marker, protocol,
+host, port, or database name does not match the dedicated target.
 
 The tests clean only rows whose IDs were generated with their per-run test
 prefix. They do not truncate tables or touch the development database. Stop

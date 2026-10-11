@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const marker = process.env.PRODUCT_SCOUT_TEST_DATABASE;
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -36,10 +37,11 @@ console.log('Applying Drizzle migrations to the dedicated test database target.'
 const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 const result = spawnSync(
   pnpm,
-  ['--filter', '@product-scout/db', 'exec', 'drizzle-kit', 'migrate'],
+  ['--filter', '@product-scout/db', 'exec', 'node', 'scripts/migrate.mjs'],
   {
-    cwd: new URL('..', import.meta.url),
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
     env: { ...process.env, DATABASE_URL: databaseUrl },
+    shell: process.platform === 'win32',
     stdio: 'inherit',
   },
 );

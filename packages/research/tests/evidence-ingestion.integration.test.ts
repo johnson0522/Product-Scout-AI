@@ -19,6 +19,7 @@ if (!testDatabaseAuthorized) {
 
 const describeIntegration = testDatabaseAuthorized ? describe : describe.skip;
 const evidencePrefix = `ingestion-integration-${Date.now()}-`;
+let nextEvidenceNumber = 1;
 
 function isDedicatedTestUrl(value: string | undefined): value is string {
   if (!value) return false;
@@ -34,10 +35,8 @@ function isDedicatedTestUrl(value: string | undefined): value is string {
 }
 
 class SequenceIds implements EvidenceIdGenerator {
-  private next = 1;
-
   public generate(): EvidenceId {
-    return `${evidencePrefix}${this.next++}`;
+    return `${evidencePrefix}${nextEvidenceNumber++}`;
   }
 }
 
