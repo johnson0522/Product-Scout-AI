@@ -347,3 +347,55 @@ captures `retrievedAt` at the ingestion boundary. Tests inject deterministic
 ID and time providers. Results are processed independently: mapping and
 persistence failures are reported per item, later items continue, and no
 batch transaction or URL deduplication is implied.
+
+### Claim and Research Finding Traceability (V0.1-D1)
+
+Evidence flows through explicit references:
+
+evidence_store -> EvidenceReference -> Claim -> ClaimId -> Research Finding
+
+Claim belongs to a ResearchRun, contains a validated research statement, and
+references one or more existing C2 Evidence records by ID. Finding reuses the
+domain Research Finding contract, belongs to the same ResearchRun, and
+references one or more Claims. Neither aggregate copies Evidence content.
+
+The application service validates referenced Evidence existence and enforces
+that every Claim used by a Finding belongs to the Finding's ResearchRun before
+persisting the aggregate. Repository failures remain explicit. PostgreSQL uses
+normalized claims, claim_evidence_refs, research_findings, and
+research_finding_claims tables. Aggregate inserts are transactional, and the
+relation tables preserve stable reference order with a position column.
+
+The existing research-run-scoped evidence table, the C2 evidence_store shape,
+Agent Runtime, Agent Gateway, Product Events, and SSE contracts remain
+unchanged.
+
+### Research Quality Control (V0.1-D2)
+
+V0.1-D2 adds an independently callable, deterministic quality assessment
+boundary on top of the D1 trace:
+
+Research Finding -> Claims -> Evidence -> caller-provided classifications
+                 -> ResearchQualityAssessment
+
+The caller explicitly supplies each Claim/Evidence relation as supports,
+contradicts, or unclear, together with an Evidence semantic kind and source
+kind. The quality service does not infer these values with an LLM, URL pattern,
+or search pipeline. Missing relation or classification input is treated as
+unknown and produces an explainable review issue.
+
+The assessment evaluates support coverage, source diversity, duplicate source
+URLs, incomplete classifications, strong Claim language with limited support,
+and coexistence of supporting and contradicting relations. Coexistence creates
+an EvidenceConflictCandidate; it does not automatically conclude that the
+underlying Evidence content is factually contradictory.
+
+Every result contains rule IDs, reasons, involved Claim and Evidence IDs,
+relevant source URLs, blocking severity, and a human-review flag. Assessment
+statuses are sufficient, needs_review, insufficient, or conflicted, while the
+complete issue list is preserved when multiple rules trigger.
+
+D2 assessments are calculated from the existing D1 trace and are not persisted.
+No database table, migration, Repository contract, Agent Runtime flow, Agent
+Gateway behavior, Product Event, SSE contract, Search Tool, or Evidence
+ingestion behavior changes in D2.

@@ -26,7 +26,7 @@ export interface EvidenceReference {
   readonly evidenceId: EvidenceId;
 }
 
-/** Minimal Claim contract without introducing a Claim aggregate. */
+/** Compatibility helper for code that only needs a validated reference list. */
 export interface ClaimEvidenceLinks {
   readonly evidenceRefs: readonly EvidenceReference[];
 }

@@ -9,6 +9,7 @@ import {
   check,
   integer,
   jsonb,
+  primaryKey,
   pgEnum,
   pgTable,
   real,
@@ -31,6 +32,9 @@ export const researchStepStatusEnum = pgEnum('research_step_status', [
   'pending', 'running', 'completed', 'failed', 'cancelled',
 ]);
 export const sourceTypeEnum = pgEnum('source_type', ['web', 'document', 'community', 'other']);
+export const researchFindingTypeEnum = pgEnum('research_finding_type', [
+  'opportunity', 'risk', 'insight',
+]);
 
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -134,6 +138,49 @@ export const evidenceStore = pgTable('evidence_store', {
   excerpt: text('excerpt').notNull(),
   retrievedAt: timestamp('retrieved_at', { withTimezone: true }).notNull(),
 });
+
+export const claims = pgTable('claims', {
+  id: text('id').primaryKey(),
+  researchRunId: uuid('research_run_id').notNull()
+    .references(() => researchRuns.id, { onDelete: 'cascade' }),
+  text: text('text').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+});
+
+export const claimEvidenceRefs = pgTable('claim_evidence_refs', {
+  claimId: text('claim_id').notNull()
+    .references(() => claims.id, { onDelete: 'cascade' }),
+  evidenceId: text('evidence_id').notNull()
+    .references(() => evidenceStore.id, { onDelete: 'restrict' }),
+  position: integer('position').notNull(),
+}, (table) => ({
+  primaryKey: primaryKey(table.claimId, table.evidenceId),
+  positionUnique: uniqueIndex('claim_evidence_refs_claim_position_idx')
+    .on(table.claimId, table.position),
+}));
+
+export const researchFindings = pgTable('research_findings', {
+  id: text('id').primaryKey(),
+  researchRunId: uuid('research_run_id').notNull()
+    .references(() => researchRuns.id, { onDelete: 'cascade' }),
+  type: researchFindingTypeEnum('type').notNull(),
+  title: text('title').notNull(),
+  description: text('description').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+});
+
+export const researchFindingClaims = pgTable('research_finding_claims', {
+  findingId: text('finding_id').notNull()
+    .references(() => researchFindings.id, { onDelete: 'cascade' }),
+  claimId: text('claim_id').notNull()
+    .references(() => claims.id, { onDelete: 'cascade' }),
+  position: integer('position').notNull(),
+}, (table) => ({
+  primaryKey: primaryKey(table.findingId, table.claimId),
+  positionUnique: uniqueIndex('research_finding_claims_finding_position_idx')
+    .on(table.findingId, table.position),
+}));
+
 export const opportunities = pgTable('opportunities', {
   id: uuid('id').defaultRandom().primaryKey(),
   researchRunId: uuid('research_run_id').notNull().references(() => researchRuns.id, { onDelete: 'cascade' }),
@@ -177,7 +224,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
 }));
 export const researchRunsRelations = relations(researchRuns, ({ one, many }) => ({
   project: one(projects, { fields: [researchRuns.projectId], references: [projects.id] }),
-  steps: many(researchSteps), evidence: many(evidence), opportunities: many(opportunities), validationPlans: many(validationPlans), productEvents: many(productEvents),
+  steps: many(researchSteps), evidence: many(evidence), claims: many(claims), findings: many(researchFindings), opportunities: many(opportunities), validationPlans: many(validationPlans), productEvents: many(productEvents),
 }));
 export const productEventsRelations = relations(productEvents, ({ one }) => ({
   researchRun: one(researchRuns, { fields: [productEvents.researchRunId], references: [researchRuns.id] }),
@@ -189,6 +236,26 @@ export const sourcesRelations = relations(sources, ({ many }) => ({ evidence: ma
 export const evidenceRelations = relations(evidence, ({ one }) => ({
   researchRun: one(researchRuns, { fields: [evidence.researchRunId], references: [researchRuns.id] }),
   source: one(sources, { fields: [evidence.sourceId], references: [sources.id] }),
+}));
+export const evidenceStoreRelations = relations(evidenceStore, ({ many }) => ({
+  claimReferences: many(claimEvidenceRefs),
+}));
+export const claimsRelations = relations(claims, ({ one, many }) => ({
+  researchRun: one(researchRuns, { fields: [claims.researchRunId], references: [researchRuns.id] }),
+  evidenceRefs: many(claimEvidenceRefs),
+  findingRefs: many(researchFindingClaims),
+}));
+export const claimEvidenceRefsRelations = relations(claimEvidenceRefs, ({ one }) => ({
+  claim: one(claims, { fields: [claimEvidenceRefs.claimId], references: [claims.id] }),
+  evidence: one(evidenceStore, { fields: [claimEvidenceRefs.evidenceId], references: [evidenceStore.id] }),
+}));
+export const researchFindingsRelations = relations(researchFindings, ({ one, many }) => ({
+  researchRun: one(researchRuns, { fields: [researchFindings.researchRunId], references: [researchRuns.id] }),
+  claimRefs: many(researchFindingClaims),
+}));
+export const researchFindingClaimsRelations = relations(researchFindingClaims, ({ one }) => ({
+  finding: one(researchFindings, { fields: [researchFindingClaims.findingId], references: [researchFindings.id] }),
+  claim: one(claims, { fields: [researchFindingClaims.claimId], references: [claims.id] }),
 }));
 export const opportunitiesRelations = relations(opportunities, ({ one }) => ({
   researchRun: one(researchRuns, { fields: [opportunities.researchRunId], references: [researchRuns.id] }),

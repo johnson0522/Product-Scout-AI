@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --max-warnings 0",
     "test": "vitest run --passWithNoTests",
-    "test:integration": "node ../../scripts/assert-test-db.mjs && vitest run tests/evidence-ingestion.integration.test.ts"
+    "test:integration": "node ../../scripts/assert-test-db.mjs && vitest run tests/evidence-ingestion.integration.test.ts tests/research-finding.integration.test.ts tests/research-quality.integration.test.ts"
   },
   "dependencies": {
     "@product-scout/agent-sdk": "workspace:*",

@@ -6,6 +6,8 @@ export type ResearchRunId = string;
 export type ResearchStepId = string;
 export type SourceId = string;
 export type EvidenceId = string;
+export type ClaimId = string;
+export type FindingId = string;
 export type OpportunityId = string;
 export type ValidationPlanId = string;
 
@@ -144,11 +146,66 @@ export interface ResearchResult {
 }
 
 export interface Finding {
-  readonly id: string;
+  readonly id: FindingId;
+  readonly researchRunId: ResearchRunId;
   readonly type: 'opportunity' | 'risk' | 'insight';
   readonly title: string;
   readonly description: string;
-  readonly evidence: readonly Evidence[];
+  readonly claimIds: readonly ClaimId[];
+  readonly createdAt: Date;
+}
+
+export interface CreateFindingInput {
+  readonly id: FindingId;
+  readonly researchRunId: ResearchRunId;
+  readonly type: Finding['type'];
+  readonly title: string;
+  readonly description: string;
+  readonly claimIds: readonly ClaimId[];
+  readonly createdAt: Date;
+}
+
+export class InvalidFindingError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'InvalidFindingError';
+  }
+}
+
+export function createFinding(input: CreateFindingInput): Finding {
+  const id = requireFindingText(input.id, 'id');
+  const researchRunId = requireFindingText(input.researchRunId, 'researchRunId');
+  const title = requireFindingText(input.title, 'title');
+  const description = requireFindingText(input.description, 'description');
+  if (input.claimIds.length === 0) {
+    throw new InvalidFindingError('claimIds must contain at least one ClaimId');
+  }
+
+  const claimIds = input.claimIds.map((claimId) =>
+    requireFindingText(claimId, 'claimId'));
+  if (new Set(claimIds).size !== claimIds.length) {
+    throw new InvalidFindingError('claimIds must not contain duplicate ClaimIds');
+  }
+  if (!(input.createdAt instanceof Date) || Number.isNaN(input.createdAt.getTime())) {
+    throw new InvalidFindingError('createdAt must be a valid Date');
+  }
+
+  return {
+    id,
+    researchRunId,
+    type: input.type,
+    title,
+    description,
+    claimIds,
+    createdAt: new Date(input.createdAt.getTime()),
+  };
+}
+
+function requireFindingText(value: string, field: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new InvalidFindingError(field + ' must be a non-empty string');
+  }
+  return value.trim();
 }
 
 export interface ResearchStepBase {
