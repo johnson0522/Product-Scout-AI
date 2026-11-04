@@ -164,6 +164,51 @@ cp .env.example .env
 ```
 Required environment variables will be documented as the implementation progresses.
 
+### Real web search (E1)
+
+Configure the root `.env` for either Brave or Tavily:
+
+```dotenv
+SEARCH_PROVIDER=brave
+SEARCH_API_KEY=your-provider-key
+SEARCH_BASE_URL=
+SEARCH_TIMEOUT_MS=10000
+SEARCH_MAX_RESPONSE_BYTES=1048576
+```
+
+`SEARCH_BASE_URL` is an optional **complete HTTPS search endpoint**, not an API
+prefix. Blank uses `https://api.search.brave.com/res/v1/web/search` for Brave or
+`https://api.tavily.com/search` for Tavily. Custom endpoints must not contain
+credentials, query parameters, or fragments. Only configure trusted endpoints:
+the selected endpoint receives the search API key. Keys stay on the server.
+
+Run a live smoke check from the repository root (requires Node 20.6+ and a root
+`.env` file; this makes one real search request and may use provider quota):
+
+```bash
+pnpm --filter @product-scout/agent search:smoke "hvac software"
+```
+
+The command prints tool lifecycle events to stderr and raw search results to
+stdout. It does not write to the database. Missing provider/key fails explicitly;
+MockSearchProvider remains an explicitly selected test fixture only.
+
+For application composition, use the server-side `createSearchTool` export from
+`@product-scout/agent/search`. It accepts an explicit `SearchConfig` or lazily reads
+the process environment. The host application must load its environment before
+calling the factory; the smoke command loads the root `.env` itself.
+
+Requests default to ten results and are capped at twenty for both providers,
+without pagination or automatic retries. The ten-second deadline covers response
+body reads; the one-MiB limit applies to actual streamed bytes. Search snippets
+remain untrusted source excerpts, not verified page content or generated answers.
+Structured provider failures are retained as `SearchToolExecutionError.cause`;
+events omit secrets and upstream response bodies.
+
+E1 makes search independently usable with the existing evidence ingestion
+service. Connecting it to `/api/research`, enforcing run-wide budgets, and
+generating reports remain E2 and later work.
+
 ## Architecture Documents
 - docs/architecture.md
 - docs/v0.1.md

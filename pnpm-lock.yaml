@@ -56,6 +56,9 @@ importers:
       '@product-scout/agent-sdk':
         specifier: workspace:*
         version: link:../../packages/agent-sdk
+      '@product-scout/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@product-scout/domain':
         specifier: workspace:*
         version: link:../../packages/domain

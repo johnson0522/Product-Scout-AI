@@ -3,6 +3,8 @@ export * from './research-events';
 export * from './research-service';
 export * from './research-state';
 export * from './search';
+export * from './search-providers/errors';
+export * from './search-providers/http-search-provider';
 export * from './evidence-ingestion';
 export * from './research-finding-service';
 export * from './research-quality';

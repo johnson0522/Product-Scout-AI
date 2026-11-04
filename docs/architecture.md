@@ -144,6 +144,41 @@ The provider only returns raw search results; it does not create or persist
 Evidence. The initial mock provider is deterministic and performs no network
 requests.
 
+E1 adds a real transport adapter without changing `SearchProvider`:
+
+```text
+readSearchConfig (packages/config)
+        ↓
+createSearchTool (apps/agent, server-side composition)
+        ↓
+SearchTool -> HttpSearchProvider -> Brave / Tavily HTTP search API
+        ↓
+SearchResultEvidenceIngestion -> EvidenceRepository
+```
+
+The HTTP adapter lives in `packages/research/src/search-providers`, accepts
+explicit configuration and an injectable fetch transport, and does not read env,
+persist evidence, or call DSH. Provider-specific request/response mapping is
+separate from timeout, bounded streaming, and error handling. The server-side
+factory reads and validates search configuration lazily; missing configuration
+never falls back to mock fixtures. The old `createMockSearchTool` is retained for
+explicit tests/development only.
+
+Both providers use at most twenty results per call (ten by default), with no
+pagination or automatic retries. The default ten-second deadline covers the full
+request and response body, and the default one-MiB cap checks actual streamed
+bytes even if Content-Length is missing or inaccurate. Requests reject redirects.
+Only server-configured HTTPS endpoints receive credentials; result URLs are not
+fetched. External titles/snippets remain untrusted data. Tool lifecycle events
+provide observability without exposing keys, provider error bodies, or hidden
+reasoning. Typed, sanitized provider errors survive the existing tool wrapper as
+its `cause`, for later budget-aware retry decisions.
+
+E1 adds a developer-only `search:smoke` command for one live request. It is not
+registered with DSH or exposed as an Agent shell capability. Production workflow
+composition through the Gateway and run-wide budgets remain E2; E1 alone does
+not make the research endpoint execute a complete research run.
+
 V0.1-C2-A defines the evidence boundary without adding persistence:
 
 ```text

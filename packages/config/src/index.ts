@@ -1,3 +1,5 @@
+export * from './search';
+
 export interface AppConfig {
   databaseUrl: string;
   appUrl: string;

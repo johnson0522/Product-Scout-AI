@@ -5,13 +5,15 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./runtime-factory": "./src/runtime/DeepSeekHarnessRuntimeFactory.ts"
+    "./runtime-factory": "./src/runtime/DeepSeekHarnessRuntimeFactory.ts",
+    "./search": "./src/search/index.ts"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "poc": "tsx src/index.ts",
+    "search:smoke": "tsx --env-file=../../.env src/search/smoke.ts",
     "lint": "eslint src --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
@@ -19,6 +21,7 @@
   "dependencies": {
     "@deepseek-ai/dsh-sdk-client": "0.2.1-alpha.1",
     "@product-scout/domain": "workspace:*",
+    "@product-scout/config": "workspace:*",
     "@product-scout/agent-sdk": "workspace:*",
     "@product-scout/research": "workspace:*",
     "@product-scout/evidence": "workspace:*"

@@ -136,6 +136,15 @@ ProductEvent (持久化) → SSE → 前端实时进度
 
 ## 3. 分阶段计划
 
+实施进度（2026-11-04）：E1 已加入 Brave/Tavily HTTP Provider、严格配置校验、
+生产搜索工厂及 `search:smoke` 独立验证入口。Mock 保留为显式测试替身；
+真实密钥调用需在配置供应商后单独验证。本文现状审核保留为实施前基线，
+E2 的 Gateway/Coordinator 接线和研究预算仍待实现。
+
+E1 验证：`pnpm typecheck`、`pnpm test`、`pnpm lint` 均通过；新增 82 个测试，
+包含 HTTP fixture、配置/工厂、证据摄取联通与 Node CLI 加载回归。
+现有 26 个 PostgreSQL 集成用例因未配置专用测试库而跳过；未执行真实供应商 API 联调。
+
 每个阶段独立可交付、可测试，遵循 `AGENTS.md` §25
 （Specification → Plan → Implementation → Test → Review → Commit）。
 
