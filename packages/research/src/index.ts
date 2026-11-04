@@ -6,3 +6,7 @@ export * from './search';
 export * from './evidence-ingestion';
 export * from './research-finding-service';
 export * from './research-quality';
+export * from './research-workflow';
+export * from './research-workflow-coordinator';
+export * from './research-workflow-testing';
+export * from './research-workflow-search-handlers';

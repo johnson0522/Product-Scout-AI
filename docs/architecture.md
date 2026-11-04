@@ -399,3 +399,50 @@ D2 assessments are calculated from the existing D1 trace and are not persisted.
 No database table, migration, Repository contract, Agent Runtime flow, Agent
 Gateway behavior, Product Event, SSE contract, Search Tool, or Evidence
 ingestion behavior changes in D2.
+
+### Research Workflow Application Contract (V0.1-D3-A)
+
+D3-A defines a small application-layer contract in
+`packages/research/src/research-workflow.ts`. It describes the fixed V0.1
+research step dependency graph, workflow and step execution states, failure
+categories, bounded retry semantics, and workflow input validation. The
+contract is descriptive and deterministic; it is not a general-purpose DAG
+engine and does not execute side effects.
+
+The default dependency graph is:
+
+```text
+market_understanding
+  ├── pain_point_research ───────┐
+  ├── competitor_research ───────┼──> opportunity_analysis
+  └── market_signal_research ────┘              │
+                                                └──> report_generation
+```
+
+The three middle research steps depend on `market_understanding` and are
+independent of one another. The contract expresses those dependencies without
+introducing a scheduler or promising parallel execution. Workflow execution
+state is application-level and is not persisted by D3-A; the existing
+ResearchRun, AgentGateway, AgentRuntime, Product Events, SSE, and PostgreSQL
+contracts remain unchanged.
+
+`ResearchWorkflowStepStatus` includes `skipped` for future application
+semantics, while the existing domain/database `ResearchStepStatus` remains
+unchanged. The default V0.1 steps are non-skippable and have one attempt.
+Retries are explicit and bounded by `maxAttempts`; a handler may resolve a
+running step as skipped only when the definition allows it. No exactly-once or
+cross-process recovery guarantee is implied.
+
+D3-A only defines the integration boundary for Search, Evidence Ingestion,
+ResearchFindingService, and ResearchQualityAssessmentService. D3-B adds an
+`InMemoryResearchWorkflowCoordinator` that executes the contract with injected
+step handlers and deterministic in-process state. The coordinator does not
+generate Claims, infer Evidence relationships, call DSH, or connect the real
+Search, Evidence, Finding, or Quality services yet.
+
+The coordinator reuses an invocation within the same process, stops after the
+first failed step, marks pending downstream work as skipped, and supports
+cooperative cancellation. This is not durable idempotency, cross-process
+coordination, automatic retry, or exactly-once execution. Fake handlers and
+application-level tests exercise these semantics before real service adapters
+are introduced.

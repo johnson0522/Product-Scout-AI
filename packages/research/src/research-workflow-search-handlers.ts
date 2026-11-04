@@ -1,0 +1,185 @@
+import type {
+  AgentSessionId,
+  ToolCompletedEvent,
+  ToolStartedEvent,
+} from '@product-scout/agent-sdk';
+import type { ResearchRunId } from '@product-scout/domain';
+
+import {
+  SearchResultEvidenceIngestion,
+  type EvidenceIngestionResult,
+  type SearchExecutor,
+} from './evidence-ingestion';
+import type {
+  ResearchWorkflowStepHandler,
+  ResearchWorkflowStepHandlerInput,
+  ResearchWorkflowStepHandlerRegistry,
+} from './research-workflow-coordinator';
+import type {
+  ResearchWorkflowStepDiagnostic,
+  ResearchWorkflowStepId,
+  ResearchWorkflowStepResult,
+} from './research-workflow';
+import type { SearchToolContext, SearchToolInput } from './search';
+
+export interface ResearchWorkflowSearchHandlerOptions {
+  readonly search: SearchExecutor;
+  readonly ingestion: SearchResultEvidenceIngestion;
+  /**
+   * ResearchRunId is always passed into SearchTool as execution context. The
+   * C2 evidence_store schema is intentionally unchanged in this phase, so it
+   * is not yet a persisted Evidence foreign key.
+   */
+  readonly sessionId?: AgentSessionId | ((researchRunId: ResearchRunId) => AgentSessionId);
+  readonly toolInvocationId?: (stepId: ResearchWorkflowStepId, attempt: number) => string;
+  readonly now?: () => Date;
+  readonly emit?: (event: ToolStartedEvent | ToolCompletedEvent) => void;
+  readonly limit?: number;
+}
+
+export interface ResearchWorkflowSearchHandlerFactory {
+  readonly handlers: ResearchWorkflowStepHandlerRegistry;
+  readonly queryForStep: (
+    stepId: ResearchWorkflowStepId,
+    goal: string,
+  ) => string;
+}
+
+const searchableSteps: readonly ResearchWorkflowStepId[] = [
+  'market_understanding',
+  'pain_point_research',
+  'competitor_research',
+  'market_signal_research',
+];
+
+/**
+ * Adapts the existing SearchTool and Evidence ingestion service to workflow
+ * handlers. It deliberately does not create Claims, Findings, or Quality
+ * Assessment inputs. Evidence ingestion remains append-only: invocation
+ * identity is deduplicated by the Coordinator, while repeated new invocations
+ * may persist distinct evidence records for the same URL.
+ */
+export class ResearchWorkflowSearchHandlers implements ResearchWorkflowSearchHandlerFactory {
+  public readonly handlers: ResearchWorkflowStepHandlerRegistry;
+  public readonly queryForStep: (
+    stepId: ResearchWorkflowStepId,
+    goal: string,
+  ) => string;
+
+  public constructor(private readonly options: ResearchWorkflowSearchHandlerOptions) {
+    this.queryForStep = defaultQueryForStep;
+    const handlers = new Map<ResearchWorkflowStepId, ResearchWorkflowStepHandler>();
+    for (const stepId of searchableSteps) {
+      handlers.set(stepId, this.createHandler(stepId));
+    }
+    handlers.set('opportunity_analysis', this.createUnimplementedHandler('opportunity_analysis'));
+    handlers.set('report_generation', this.createUnimplementedHandler('report_generation'));
+    this.handlers = handlers;
+  }
+
+  private createHandler(stepId: ResearchWorkflowStepId): ResearchWorkflowStepHandler {
+    return async (input) => this.executeStep(stepId, input);
+  }
+
+  private createUnimplementedHandler(
+    stepId: Extract<ResearchWorkflowStepId, 'opportunity_analysis' | 'report_generation'>,
+  ): ResearchWorkflowStepHandler {
+    return async () => ({
+      status: 'failed',
+      stepId,
+      failure: {
+        kind: 'precondition_failed',
+        message: `${stepId} is not implemented in the Search/Evidence integration phase.`,
+        retryable: false,
+      },
+    });
+  }
+
+  private async executeStep(
+    stepId: ResearchWorkflowStepId,
+    input: ResearchWorkflowStepHandlerInput,
+  ): Promise<ResearchWorkflowStepResult> {
+    if (input.isCancelled()) {
+      return {
+        status: 'failed',
+        stepId,
+        failure: {
+          kind: 'cancelled',
+          message: `Workflow was cancelled before ${stepId} started.`,
+          retryable: false,
+        },
+      };
+    }
+
+    const sessionId = typeof this.options.sessionId === 'function'
+      ? this.options.sessionId(input.workflow.researchRunId)
+      : this.options.sessionId ?? `research-run:${input.workflow.researchRunId}`;
+    const toolInvocationId = this.options.toolInvocationId?.(stepId, input.attempt)
+      ?? `${input.workflow.researchRunId}:${stepId}:${input.attempt}`;
+    const searchContext: SearchToolContext = {
+      sessionId,
+      researchRunId: input.workflow.researchRunId,
+      toolInvocationId,
+      ...(this.options.now === undefined ? {} : { now: this.options.now }),
+      ...(this.options.emit === undefined ? {} : { emit: this.options.emit }),
+    };
+    const searchInput: SearchToolInput = {
+      query: this.queryForStep(stepId, input.workflow.goal),
+      ...(this.options.limit === undefined ? {} : { limit: this.options.limit }),
+    };
+
+    const ingestion = await this.options.ingestion.execute({
+      search: this.options.search,
+      searchInput,
+      searchContext,
+    });
+    return createResult(stepId, ingestion);
+  }
+}
+
+function createResult(
+  stepId: ResearchWorkflowStepId,
+  ingestion: EvidenceIngestionResult,
+): ResearchWorkflowStepResult {
+  const persistedEvidenceIds = ingestion.items
+    .filter((item): item is Extract<typeof item, { status: 'persisted' }> =>
+      item.status === 'persisted')
+    .map((item) => item.evidence.id);
+  const diagnostics = ingestion.items
+    .filter((item): item is Exclude<typeof item, { status: 'persisted' }> =>
+      item.status !== 'persisted')
+    .map((item): ResearchWorkflowStepDiagnostic => ({
+      code: `evidence.${item.status}`,
+      message: item.errorMessage,
+    }));
+
+  if (ingestion.total > 0 && persistedEvidenceIds.length === 0) {
+    return {
+      status: 'failed',
+      stepId,
+      failure: {
+        kind: 'execution_failed',
+        message: `No evidence was persisted for ${stepId}.`,
+        retryable: false,
+      },
+    };
+  }
+
+  return {
+    status: 'completed',
+    stepId,
+    artifactIds: persistedEvidenceIds,
+    ...(diagnostics.length === 0 ? {} : { diagnostics }),
+  };
+}
+
+export function defaultQueryForStep(stepId: ResearchWorkflowStepId, goal: string): string {
+  const suffixByStep: Partial<Record<ResearchWorkflowStepId, string>> = {
+    market_understanding: '',
+    pain_point_research: ' customer pain points complaints',
+    competitor_research: ' competitors alternatives',
+    market_signal_research: ' market demand trends signals',
+  };
+  return `${goal.trim()}${suffixByStep[stepId] ?? ''}`.trim();
+}
+
