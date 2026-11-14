@@ -6,7 +6,7 @@ import type {
 import type { ResearchRunId } from '@product-scout/domain';
 
 import {
-  SearchResultEvidenceIngestion,
+  type EvidenceAcquisitionIngestionExecutor,
   type EvidenceIngestionResult,
   type SearchExecutor,
 } from './evidence-ingestion';
@@ -20,21 +20,19 @@ import type {
   ResearchWorkflowStepId,
   ResearchWorkflowStepResult,
 } from './research-workflow';
+import { getResearchWorkflowInvocationKey } from './research-workflow';
 import type { SearchToolContext, SearchToolInput } from './search';
 
 export interface ResearchWorkflowSearchHandlerOptions {
   readonly search: SearchExecutor;
-  readonly ingestion: SearchResultEvidenceIngestion;
-  /**
-   * ResearchRunId is always passed into SearchTool as execution context. The
-   * C2 evidence_store schema is intentionally unchanged in this phase, so it
-   * is not yet a persisted Evidence foreign key.
-   */
+  readonly ingestion: EvidenceAcquisitionIngestionExecutor;
   readonly sessionId?: AgentSessionId | ((researchRunId: ResearchRunId) => AgentSessionId);
   readonly toolInvocationId?: (stepId: ResearchWorkflowStepId, attempt: number) => string;
   readonly now?: () => Date;
   readonly emit?: (event: ToolStartedEvent | ToolCompletedEvent) => void;
   readonly limit?: number;
+  readonly analysisHandler?: ResearchWorkflowStepHandler;
+  readonly reportHandler?: ResearchWorkflowStepHandler;
 }
 
 export interface ResearchWorkflowSearchHandlerFactory {
@@ -45,7 +43,12 @@ export interface ResearchWorkflowSearchHandlerFactory {
   ) => string;
 }
 
-const searchableSteps: readonly ResearchWorkflowStepId[] = [
+type SearchableResearchWorkflowStepId = Exclude<
+  ResearchWorkflowStepId,
+  'opportunity_analysis' | 'report_generation'
+>;
+
+const searchableSteps: readonly SearchableResearchWorkflowStepId[] = [
   'market_understanding',
   'pain_point_research',
   'competitor_research',
@@ -55,9 +58,8 @@ const searchableSteps: readonly ResearchWorkflowStepId[] = [
 /**
  * Adapts the existing SearchTool and Evidence ingestion service to workflow
  * handlers. It deliberately does not create Claims, Findings, or Quality
- * Assessment inputs. Evidence ingestion remains append-only: invocation
- * identity is deduplicated by the Coordinator, while repeated new invocations
- * may persist distinct evidence records for the same URL.
+ * Assessment inputs. Evidence and its ResearchRun acquisition are persisted
+ * through the injected atomic acquisition boundary.
  */
 export class ResearchWorkflowSearchHandlers implements ResearchWorkflowSearchHandlerFactory {
   public readonly handlers: ResearchWorkflowStepHandlerRegistry;
@@ -72,12 +74,18 @@ export class ResearchWorkflowSearchHandlers implements ResearchWorkflowSearchHan
     for (const stepId of searchableSteps) {
       handlers.set(stepId, this.createHandler(stepId));
     }
-    handlers.set('opportunity_analysis', this.createUnimplementedHandler('opportunity_analysis'));
-    handlers.set('report_generation', this.createUnimplementedHandler('report_generation'));
+    handlers.set(
+      'opportunity_analysis',
+      options.analysisHandler ?? this.createUnimplementedHandler('opportunity_analysis'),
+    );
+    handlers.set(
+      'report_generation',
+      options.reportHandler ?? this.createUnimplementedHandler('report_generation'),
+    );
     this.handlers = handlers;
   }
 
-  private createHandler(stepId: ResearchWorkflowStepId): ResearchWorkflowStepHandler {
+  private createHandler(stepId: SearchableResearchWorkflowStepId): ResearchWorkflowStepHandler {
     return async (input) => this.executeStep(stepId, input);
   }
 
@@ -96,7 +104,7 @@ export class ResearchWorkflowSearchHandlers implements ResearchWorkflowSearchHan
   }
 
   private async executeStep(
-    stepId: ResearchWorkflowStepId,
+    stepId: SearchableResearchWorkflowStepId,
     input: ResearchWorkflowStepHandlerInput,
   ): Promise<ResearchWorkflowStepResult> {
     if (input.isCancelled()) {
@@ -132,13 +140,15 @@ export class ResearchWorkflowSearchHandlers implements ResearchWorkflowSearchHan
       search: this.options.search,
       searchInput,
       searchContext,
+      workflowInvocationKey: getResearchWorkflowInvocationKey(input.workflow),
+      stepId,
     });
     return createResult(stepId, ingestion);
   }
 }
 
 function createResult(
-  stepId: ResearchWorkflowStepId,
+  stepId: SearchableResearchWorkflowStepId,
   ingestion: EvidenceIngestionResult,
 ): ResearchWorkflowStepResult {
   const persistedEvidenceIds = ingestion.items
@@ -169,6 +179,11 @@ function createResult(
     status: 'completed',
     stepId,
     artifactIds: persistedEvidenceIds,
+    artifacts: persistedEvidenceIds.map((evidenceId) => ({
+      kind: 'evidence' as const,
+      evidenceId,
+      stepId,
+    })),
     ...(diagnostics.length === 0 ? {} : { diagnostics }),
   };
 }

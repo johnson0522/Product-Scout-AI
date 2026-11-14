@@ -5,9 +5,9 @@ import { createEvidence } from '@product-scout/evidence';
 import {
   createDb,
   DrizzleClaimRepository,
+  DrizzleEvidenceAcquisitionRepository,
   DrizzleEvidenceStoreRepository,
   DrizzleResearchFindingRepository,
-  evidenceStore,
   projects,
   researchRuns,
   users,
@@ -53,8 +53,10 @@ describeIntegration('ResearchFindingService with PostgreSQL repositories', () =>
   beforeAll(async () => {
     database = createDb(testDatabaseUrl);
     const evidenceRepository = new DrizzleEvidenceStoreRepository(database.db);
+    const evidenceAcquisitionRepository = new DrizzleEvidenceAcquisitionRepository(database.db);
     service = new ResearchFindingService(
       evidenceRepository,
+      evidenceAcquisitionRepository,
       new DrizzleClaimRepository(database.db),
       new DrizzleResearchFindingRepository(database.db),
     );
@@ -73,13 +75,29 @@ describeIntegration('ResearchFindingService with PostgreSQL repositories', () =>
       { id: runId, projectId, goal: 'Trace findings to evidence' },
       { id: otherRunId, projectId, goal: 'Reject cross-run claims' },
     ]);
-    await evidenceRepository.create(createEvidence({
+    const storedEvidence = createEvidence({
       id: prefix + 'evidence',
       source: { url: 'https://example.test/d1-service-source' },
       title: 'D1 application service evidence',
       excerpt: 'Teams report recurring manual reconciliation work.',
       retrievedAt: new Date('2026-10-19T06:07:08.901Z'),
-    }));
+    });
+    await evidenceAcquisitionRepository.acquire({
+      evidence: storedEvidence,
+      researchRunId: runId,
+      workflowInvocationKey: prefix + 'run-invocation',
+      stepId: 'market_understanding',
+      sourceFingerprint: `sha256:${'a'.repeat(64)}`,
+      capturedAt: storedEvidence.retrievedAt,
+    });
+    await evidenceAcquisitionRepository.acquire({
+      evidence: storedEvidence,
+      researchRunId: otherRunId,
+      workflowInvocationKey: prefix + 'other-run-invocation',
+      stepId: 'market_understanding',
+      sourceFingerprint: `sha256:${'a'.repeat(64)}`,
+      capturedAt: storedEvidence.retrievedAt,
+    });
   });
 
   afterAll(async () => {
@@ -97,6 +115,10 @@ describeIntegration('ResearchFindingService with PostgreSQL repositories', () =>
     );
     await database.client.unsafe(
       'delete from claims where research_run_id in ($1, $2)',
+      [runId, otherRunId],
+    );
+    await database.client.unsafe(
+      'delete from evidence_acquisitions where research_run_id in ($1, $2)',
       [runId, otherRunId],
     );
     await database.client.unsafe(

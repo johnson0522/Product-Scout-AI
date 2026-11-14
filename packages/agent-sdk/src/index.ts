@@ -14,6 +14,33 @@ export type AgentEventId = string;
 export type ToolInvocationId = string;
 export type AgentRuntimeMetadata = Readonly<Record<string, string>>;
 
+export type AgentJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly AgentJsonValue[]
+  | { readonly [key: string]: AgentJsonValue };
+
+export interface AgentReasoningInput {
+  readonly requestId: string;
+  readonly outputContract: string;
+  readonly prompt: string;
+}
+
+export interface AgentReasoningResult {
+  readonly requestId: string;
+  readonly outputContract: string;
+  readonly output: AgentJsonValue;
+  readonly events: readonly AgentEvent[];
+}
+
+/** A bounded structured-reasoning port independent of any concrete agent runtime. */
+export interface AgentRuntimeReasoner {
+  reason(input: AgentReasoningInput): Promise<AgentReasoningResult>;
+  cancel(requestId: string): Promise<void>;
+}
+
 export type AgentSessionStatus = 'created' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type AgentRunStatus = 'completed' | 'failed' | 'cancelled';
 

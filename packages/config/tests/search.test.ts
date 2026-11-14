@@ -26,6 +26,18 @@ describe('readSearchConfig', () => {
     expect(readSearchConfig({ ...env, SEARCH_BASE_URL: ' ' }).baseUrl).toBeUndefined();
   });
 
+  it('selects keyless MCP without using HTTP credentials or endpoint settings', () => {
+    expect(readSearchConfig({ SEARCH_PROVIDER: 'agent-web-search-mcp', SEARCH_API_KEY: '', SEARCH_BASE_URL: 'unused' }))
+      .toEqual({ provider: 'agent-web-search-mcp', command: 'agent-web-search-mcp', timeoutMs: 60_000, maxResponseBytes: 1_048_576 });
+    expect(readSearchConfig({ SEARCH_PROVIDER: 'agent-web-search-mcp', SEARCH_MCP_COMMAND: ' C:/search tools/search.exe ', SEARCH_TIMEOUT_MS: '500' }))
+      .toMatchObject({ command: 'C:/search tools/search.exe', timeoutMs: 500 });
+  });
+
+  it('rejects multiline MCP executables', () => {
+    expect(() => readSearchConfig({ SEARCH_PROVIDER: 'agent-web-search-mcp', SEARCH_MCP_COMMAND: 'search\nother' }))
+      .toThrow(SearchConfigError);
+  });
+
   it.each([{}, { SEARCH_PROVIDER: 'mock' }, { SEARCH_PROVIDER: 'brave' },
     { ...env, SEARCH_API_KEY: ' ' }, { ...env, SEARCH_API_KEY: 'secret\r\nheader' }])(
     'rejects missing or unsupported credentials/configuration without mock fallback: %j', (input) => {

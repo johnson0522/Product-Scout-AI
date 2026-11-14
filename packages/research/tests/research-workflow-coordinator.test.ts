@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   FakeResearchWorkflowHandlers,
   InMemoryResearchWorkflowCoordinator,
+  RESEARCH_ANALYSIS_WORKFLOW_DEFINITION,
   ResearchWorkflowHandlerMissingError,
   ResearchWorkflowInvocationConflictError,
 } from '../src';
@@ -175,6 +176,47 @@ describe('InMemoryResearchWorkflowCoordinator', () => {
     expect(execution.status).toBe('cancelled');
     expect(execution.steps.every((step) => step.status === 'cancelled')).toBe(true);
     expect(coordinator.cancel('unknown-run')).toBe(false);
+  });
+
+  it('treats an exception caused by active cancellation as cancelled, not failed', async () => {
+    let rejectHandler: ((error: Error) => void) | undefined;
+    const gate = new Promise<never>((_resolve, reject) => {
+      rejectHandler = reject;
+    });
+    const fake = new FakeResearchWorkflowHandlers();
+    const handlers = new Map(fake.handlers);
+    handlers.set('market_understanding', async () => gate);
+    const coordinator = new InMemoryResearchWorkflowCoordinator({ handlers });
+
+    const running = coordinator.run(input);
+    expect(coordinator.cancel(input.researchRunId)).toBe(true);
+    rejectHandler?.(new Error('owned reasoner was closed'));
+
+    const execution = await running;
+    expect(execution.status).toBe('cancelled');
+    expect(execution.failure).toBeUndefined();
+    expect(execution.steps.every((step) => step.status === 'cancelled')).toBe(true);
+  });
+
+  it('completes the versioned analysis workflow without claiming report generation', async () => {
+    const fake = new FakeResearchWorkflowHandlers();
+    const coordinator = new InMemoryResearchWorkflowCoordinator({
+      definition: RESEARCH_ANALYSIS_WORKFLOW_DEFINITION,
+      handlers: fake.handlers,
+    });
+
+    const execution = await coordinator.run(input);
+
+    expect(execution.workflowId).toBe('product-scout-analysis-v0.1');
+    expect(execution.status).toBe('completed');
+    expect(execution.steps.map((step) => step.stepId)).toEqual([
+      'market_understanding',
+      'pain_point_research',
+      'competitor_research',
+      'market_signal_research',
+      'opportunity_analysis',
+    ]);
+    expect(fake.calls.some((call) => call.definition.id === 'report_generation')).toBe(false);
   });
 
   it('reuses the same in-process invocation and rejects a conflicting input', async () => {

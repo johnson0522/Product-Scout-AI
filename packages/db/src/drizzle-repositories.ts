@@ -1,6 +1,8 @@
 import { and, asc, eq, gt, isNull, max, sql } from 'drizzle-orm';
 import {
   AgentSessionBindingConflictError,
+  createResearchReport,
+  createValidationPlan,
 } from '@product-scout/domain';
 import type {
   Evidence,
@@ -9,8 +11,10 @@ import type {
   ProductEvent,
   Project,
   ResearchRun,
+  ResearchReport,
   ResearchStep,
   Source,
+  ValidationPlan,
 } from '@product-scout/domain';
 
 import type {
@@ -25,9 +29,14 @@ import type {
   ResearchRunCreateInput,
   ResearchRunRepository,
   ResearchRunUpdateInput,
+  ResearchReportRepository,
   SourceCreateInput,
   SourceRepository,
+  ValidationPlanRepository,
 } from './repositories';
+import { OpportunityPersistenceConflictError } from './repositories';
+import { ResearchReportPersistenceConflictError } from './repositories';
+import { ValidationPlanPersistenceConflictError } from './repositories';
 import type { Database } from './index';
 import {
   evidence,
@@ -35,9 +44,11 @@ import {
   opportunities,
   projects,
   researchRuns,
+  researchReports,
   researchSteps,
   productEvents,
   sources,
+  validationPlans,
 } from './schema';
 
 type ProjectRow = typeof projects.$inferSelect;
@@ -47,6 +58,8 @@ type SourceRow = typeof sources.$inferSelect;
 type EvidenceRow = typeof evidence.$inferSelect;
 type OpportunityRow = typeof opportunities.$inferSelect;
 type OpportunityScoreRow = typeof opportunityScores.$inferSelect;
+type ResearchReportRow = typeof researchReports.$inferSelect;
+type ValidationPlanRow = typeof validationPlans.$inferSelect;
 type ProductEventRow = typeof productEvents.$inferSelect;
 type StoredProductEvent = ProductEvent & { readonly sequenceNumber: number };
 
@@ -146,7 +159,7 @@ function mapScore(row: OpportunityScoreRow): OpportunityScore {
   };
 }
 
-function mapOpportunity(row: OpportunityRow, score: OpportunityScore): Opportunity {
+function mapOpportunity(row: OpportunityRow, score: OpportunityScore, scoreReasoning: Opportunity['scoreReasoning']): Opportunity {
   return {
     id: row.id,
     researchRunId: row.researchRunId,
@@ -159,8 +172,41 @@ function mapOpportunity(row: OpportunityRow, score: OpportunityScore): Opportuni
     monetization: row.monetization,
     mvp: row.mvp,
     score,
+    scoreReasoning,
     confidence: row.confidence,
   };
+}
+
+function mapResearchReport(row: ResearchReportRow): ResearchReport {
+  return createResearchReport({
+    id: row.id,
+    researchRunId: row.researchRunId,
+    title: row.title,
+    executiveSummary: row.executiveSummary,
+    sections: row.sections,
+    limitations: row.limitations,
+    createdAt: row.createdAt,
+  });
+}
+
+function mapValidationPlan(row: ValidationPlanRow): ValidationPlan {
+  if (row.days.length !== 7) {
+    throw new Error(`ValidationPlan ${row.id} does not contain seven days`);
+  }
+  return createValidationPlan({
+    id: row.id,
+    researchRunId: row.researchRunId,
+    days: [
+      row.days[0]!,
+      row.days[1]!,
+      row.days[2]!,
+      row.days[3]!,
+      row.days[4]!,
+      row.days[5]!,
+      row.days[6]!,
+    ],
+    createdAt: row.createdAt,
+  });
 }
 
 export class DrizzleProjectRepository implements ProjectRepository {
@@ -366,12 +412,16 @@ export class DrizzleOpportunityRepository implements OpportunityRepository {
     if (!score) {
       throw new Error(`Opportunity ${row.id} has no score`);
     }
-    return mapOpportunity(row, mapScore(score));
+    return mapOpportunity(row, mapScore(score), score.reasoning);
   }
 
   public async findById(id: Opportunity['id']): Promise<Opportunity | null> {
     const rows = await this.db.select().from(opportunities).where(eq(opportunities.id, id)).limit(1);
     return rows[0] ? this.withScore(rows[0]) : null;
+  }
+
+  public async getById(id: Opportunity['id']): Promise<Opportunity | null> {
+    return this.findById(id);
   }
 
   public async listByResearchRunId(researchRunId: Opportunity['researchRunId']): Promise<readonly Opportunity[]> {
@@ -380,24 +430,244 @@ export class DrizzleOpportunityRepository implements OpportunityRepository {
   }
 
   public async create(input: OpportunityCreateInput): Promise<Opportunity> {
-    const rows = await this.db.insert(opportunities).values({
-      researchRunId: input.researchRunId,
-      title: input.title,
-      targetCustomer: input.targetCustomer,
-      problem: input.problem,
-      evidenceIds: [...input.evidenceIds],
-      solution: input.solution,
-      whyNow: input.whyNow,
-      monetization: input.monetization,
-      mvp: input.mvp,
-      confidence: input.confidence,
-    }).returning();
-    const opportunity = firstOrThrow(rows, 'opportunity');
-    await this.db.insert(opportunityScores).values({
-      opportunityId: opportunity.id,
-      total: input.score.total,
-      breakdown: input.score.breakdown,
+    return this.db.transaction(async (transaction) => {
+      const rows = await transaction.insert(opportunities).values(opportunityValues(input)).returning();
+      const opportunity = firstOrThrow(rows, 'opportunity');
+      await transaction.insert(opportunityScores).values({
+        opportunityId: opportunity.id,
+        total: input.score.total,
+        breakdown: input.score.breakdown,
+        reasoning: input.scoreReasoning,
+      });
+      return mapOpportunity(opportunity, input.score, input.scoreReasoning);
     });
-    return mapOpportunity(opportunity, input.score);
   }
+
+  public async ensure(opportunity: Opportunity): Promise<Opportunity> {
+    const existing = await this.findById(opportunity.id);
+    if (existing !== null) return requireSameOpportunity(existing, opportunity);
+    try {
+      return await this.db.transaction(async (transaction) => {
+        const rows = await transaction.insert(opportunities).values({
+          id: opportunity.id,
+          ...opportunityValues(opportunity),
+        }).returning();
+        const inserted = firstOrThrow(rows, 'opportunity');
+        await transaction.insert(opportunityScores).values({
+          opportunityId: inserted.id,
+          total: opportunity.score.total,
+          breakdown: opportunity.score.breakdown,
+          reasoning: opportunity.scoreReasoning,
+        });
+        return mapOpportunity(inserted, opportunity.score, opportunity.scoreReasoning);
+      });
+    } catch (writeError: unknown) {
+      const concurrent = await this.findById(opportunity.id);
+      if (concurrent !== null) return requireSameOpportunity(concurrent, opportunity);
+      throw writeError;
+    }
+  }
+}
+
+export class DrizzleResearchReportRepository implements ResearchReportRepository {
+  public constructor(private readonly db: Database) {}
+
+  public async findById(id: ResearchReport['id']): Promise<ResearchReport | null> {
+    const rows = await this.db.select().from(researchReports)
+      .where(eq(researchReports.id, id)).limit(1);
+    return rows[0] ? mapResearchReport(rows[0]) : null;
+  }
+
+  public async getById(id: ResearchReport['id']): Promise<ResearchReport | null> {
+    return this.findById(id);
+  }
+
+  public async listByResearchRunId(
+    researchRunId: ResearchReport['researchRunId'],
+  ): Promise<readonly ResearchReport[]> {
+    const rows = await this.db.select().from(researchReports)
+      .where(eq(researchReports.researchRunId, researchRunId));
+    return rows.map(mapResearchReport);
+  }
+
+  public async ensure(report: ResearchReport): Promise<ResearchReport> {
+    const existing = await this.findById(report.id);
+    if (existing !== null) return requireSameResearchReport(existing, report);
+    const existingForRun = await this.listByResearchRunId(report.researchRunId);
+    if (existingForRun[0] !== undefined) {
+      return requireSameResearchReport(existingForRun[0], report);
+    }
+    try {
+      const rows = await this.db.insert(researchReports).values({
+        id: report.id,
+        researchRunId: report.researchRunId,
+        title: report.title,
+        executiveSummary: report.executiveSummary,
+        sections: report.sections.map((section) => ({
+          ...section,
+          findingIds: [...section.findingIds],
+          opportunityIds: [...section.opportunityIds],
+        })),
+        limitations: [...report.limitations],
+        createdAt: sql`${report.createdAt.toISOString()}`,
+      }).returning();
+      return mapResearchReport(firstOrThrow(rows, 'research report'));
+    } catch (writeError: unknown) {
+      const concurrent = await this.findById(report.id);
+      if (concurrent !== null) return requireSameResearchReport(concurrent, report);
+      const concurrentForRun = await this.listByResearchRunId(report.researchRunId);
+      if (concurrentForRun[0] !== undefined) {
+        return requireSameResearchReport(concurrentForRun[0], report);
+      }
+      throw writeError;
+    }
+  }
+}
+
+export class DrizzleValidationPlanRepository implements ValidationPlanRepository {
+  public constructor(private readonly db: Database) {}
+
+  public async findById(id: ValidationPlan['id']): Promise<ValidationPlan | null> {
+    const rows = await this.db.select().from(validationPlans)
+      .where(eq(validationPlans.id, id)).limit(1);
+    return rows[0] ? mapValidationPlan(rows[0]) : null;
+  }
+
+  public async getById(id: ValidationPlan['id']): Promise<ValidationPlan | null> {
+    return this.findById(id);
+  }
+
+  public async listByResearchRunId(
+    researchRunId: ValidationPlan['researchRunId'],
+  ): Promise<readonly ValidationPlan[]> {
+    const rows = await this.db.select().from(validationPlans)
+      .where(eq(validationPlans.researchRunId, researchRunId));
+    return rows.map(mapValidationPlan);
+  }
+
+  public async ensure(plan: ValidationPlan): Promise<ValidationPlan> {
+    const existing = await this.findById(plan.id);
+    if (existing !== null) return requireSameValidationPlan(existing, plan);
+    const existingForRun = await this.listByResearchRunId(plan.researchRunId);
+    if (existingForRun[0] !== undefined) {
+      return requireSameValidationPlan(existingForRun[0], plan);
+    }
+    try {
+      const rows = await this.db.insert(validationPlans).values({
+        id: plan.id,
+        researchRunId: plan.researchRunId,
+        days: plan.days.map((day) => ({
+          ...day,
+          activities: [...day.activities],
+          successCriteria: [...day.successCriteria],
+        })),
+        createdAt: sql`${plan.createdAt.toISOString()}`,
+      }).returning();
+      return mapValidationPlan(firstOrThrow(rows, 'validation plan'));
+    } catch (writeError: unknown) {
+      const concurrent = await this.findById(plan.id);
+      if (concurrent !== null) return requireSameValidationPlan(concurrent, plan);
+      const concurrentForRun = await this.listByResearchRunId(plan.researchRunId);
+      if (concurrentForRun[0] !== undefined) {
+        return requireSameValidationPlan(concurrentForRun[0], plan);
+      }
+      throw writeError;
+    }
+  }
+}
+
+function opportunityValues(input: OpportunityCreateInput | Opportunity) {
+  return {
+    researchRunId: input.researchRunId,
+    title: input.title,
+    targetCustomer: input.targetCustomer,
+    problem: input.problem,
+    evidenceIds: [...input.evidenceIds],
+    solution: input.solution,
+    whyNow: input.whyNow,
+    monetization: input.monetization,
+    mvp: input.mvp,
+    confidence: input.confidence,
+  };
+}
+
+function requireSameOpportunity(existing: Opportunity, requested: Opportunity): Opportunity {
+  const dimensions = [
+    'pain',
+    'willingnessToPay',
+    'frequency',
+    'market',
+    'competition',
+    'acquisition',
+    'feasibility',
+  ] as const;
+  const same = existing.id === requested.id
+    && existing.researchRunId === requested.researchRunId
+    && existing.title === requested.title
+    && existing.targetCustomer === requested.targetCustomer
+    && existing.problem === requested.problem
+    && sameStrings(existing.evidenceIds, requested.evidenceIds)
+    && existing.solution === requested.solution
+    && existing.whyNow === requested.whyNow
+    && existing.monetization === requested.monetization
+    && existing.mvp === requested.mvp
+    && existing.confidence === requested.confidence
+    && existing.score.total === requested.score.total
+    && dimensions.every((dimension) => {
+      const left = existing.score.breakdown[dimension];
+      const right = requested.score.breakdown[dimension];
+      return left.value === right.value
+        && left.weight === right.weight
+        && left.contribution === right.contribution
+        && existing.scoreReasoning[dimension] === requested.scoreReasoning[dimension];
+    });
+  if (!same) {
+    throw new OpportunityPersistenceConflictError(requested.id);
+  }
+  return existing;
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function requireSameResearchReport(
+  existing: ResearchReport,
+  requested: ResearchReport,
+): ResearchReport {
+  const same = existing.id === requested.id
+    && existing.researchRunId === requested.researchRunId
+    && existing.title === requested.title
+    && existing.executiveSummary === requested.executiveSummary
+    && sameStrings(existing.limitations, requested.limitations)
+    && existing.sections.length === requested.sections.length
+    && existing.sections.every((section, index) => {
+      const other = requested.sections[index];
+      return other !== undefined
+        && section.id === other.id
+        && section.title === other.title
+        && section.content === other.content
+        && sameStrings(section.findingIds, other.findingIds)
+        && sameStrings(section.opportunityIds, other.opportunityIds);
+    });
+  if (!same) throw new ResearchReportPersistenceConflictError(requested.id);
+  return existing;
+}
+
+function requireSameValidationPlan(
+  existing: ValidationPlan,
+  requested: ValidationPlan,
+): ValidationPlan {
+  const same = existing.id === requested.id
+    && existing.researchRunId === requested.researchRunId
+    && existing.days.every((day, index) => {
+      const other = requested.days[index];
+      return other !== undefined
+        && day.day === other.day
+        && day.objective === other.objective
+        && sameStrings(day.activities, other.activities)
+        && sameStrings(day.successCriteria, other.successCriteria);
+    });
+  if (!same) throw new ValidationPlanPersistenceConflictError(requested.id);
+  return existing;
 }

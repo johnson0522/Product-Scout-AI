@@ -9,6 +9,7 @@ export type EvidenceId = string;
 export type ClaimId = string;
 export type FindingId = string;
 export type OpportunityId = string;
+export type ResearchReportId = string;
 export type ValidationPlanId = string;
 
 export type ProjectStatus = 'active' | 'completed' | 'archived';
@@ -287,6 +288,7 @@ export interface Opportunity {
   readonly monetization: string;
   readonly mvp: string;
   readonly score: OpportunityScore;
+  readonly scoreReasoning: OpportunityScoreReasoning;
   readonly confidence: OpportunityConfidence;
 }
 
@@ -303,6 +305,10 @@ export type OpportunityScoreInput = Readonly<
   Record<OpportunityScoreDimension, number>
 >;
 
+export type OpportunityScoreReasoning = Readonly<
+  Record<OpportunityScoreDimension, string>
+>;
+
 export interface OpportunityScoreComponent {
   readonly value: number;
   readonly weight: number;
@@ -316,6 +322,95 @@ export type OpportunityScoreBreakdown = Readonly<
 export interface OpportunityScore {
   readonly total: number;
   readonly breakdown: OpportunityScoreBreakdown;
+}
+
+export interface ResearchReportSection {
+  readonly id: string;
+  readonly title: string;
+  readonly content: string;
+  readonly findingIds: readonly FindingId[];
+  readonly opportunityIds: readonly OpportunityId[];
+}
+
+export interface ResearchReport {
+  readonly id: ResearchReportId;
+  readonly researchRunId: ResearchRunId;
+  readonly title: string;
+  readonly executiveSummary: string;
+  readonly sections: readonly ResearchReportSection[];
+  readonly limitations: readonly string[];
+  readonly createdAt: Date;
+}
+
+export type CreateResearchReportInput = ResearchReport;
+
+export class InvalidResearchReportError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'InvalidResearchReportError';
+  }
+}
+
+export function createResearchReport(input: CreateResearchReportInput): ResearchReport {
+  const sectionIds = new Set<string>();
+  if (input.sections.length === 0) {
+    throw new InvalidResearchReportError('sections must contain at least one section');
+  }
+  const sections = input.sections.map((section, index) => {
+    const id = requireReportText(section.id, `sections[${index}].id`);
+    if (sectionIds.has(id)) {
+      throw new InvalidResearchReportError(`sections contains duplicate id: ${id}`);
+    }
+    sectionIds.add(id);
+    const findingIds = uniqueReportReferences(
+      section.findingIds,
+      `sections[${index}].findingIds`,
+    );
+    const opportunityIds = uniqueReportReferences(
+      section.opportunityIds,
+      `sections[${index}].opportunityIds`,
+    );
+    if (findingIds.length === 0 && opportunityIds.length === 0) {
+      throw new InvalidResearchReportError(
+        `sections[${index}] must reference at least one Finding or Opportunity`,
+      );
+    }
+    return {
+      id,
+      title: requireReportText(section.title, `sections[${index}].title`),
+      content: requireReportText(section.content, `sections[${index}].content`),
+      findingIds,
+      opportunityIds,
+    };
+  });
+  if (!(input.createdAt instanceof Date) || Number.isNaN(input.createdAt.getTime())) {
+    throw new InvalidResearchReportError('createdAt must be a valid Date');
+  }
+  return {
+    id: requireReportText(input.id, 'id'),
+    researchRunId: requireReportText(input.researchRunId, 'researchRunId'),
+    title: requireReportText(input.title, 'title'),
+    executiveSummary: requireReportText(input.executiveSummary, 'executiveSummary'),
+    sections,
+    limitations: input.limitations.map((value, index) =>
+      requireReportText(value, `limitations[${index}]`)),
+    createdAt: new Date(input.createdAt.getTime()),
+  };
+}
+
+function uniqueReportReferences(values: readonly string[], field: string): readonly string[] {
+  const normalized = values.map((value) => requireReportText(value, field));
+  if (new Set(normalized).size !== normalized.length) {
+    throw new InvalidResearchReportError(`${field} must not contain duplicates`);
+  }
+  return normalized;
+}
+
+function requireReportText(value: string, field: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new InvalidResearchReportError(`${field} must be a non-empty string`);
+  }
+  return value.trim();
 }
 
 export const OPPORTUNITY_SCORE_WEIGHTS: Readonly<
@@ -397,4 +492,68 @@ export interface ValidationPlan {
     ValidationPlanDay,
   ];
   readonly createdAt: Date;
+}
+
+export type CreateValidationPlanInput = ValidationPlan;
+
+export class InvalidValidationPlanError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'InvalidValidationPlanError';
+  }
+}
+
+export function createValidationPlan(input: CreateValidationPlanInput): ValidationPlan {
+  if (input.days.length !== 7) {
+    throw new InvalidValidationPlanError('days must contain exactly seven entries');
+  }
+  if (!(input.createdAt instanceof Date) || Number.isNaN(input.createdAt.getTime())) {
+    throw new InvalidValidationPlanError('createdAt must be a valid Date');
+  }
+  return {
+    id: requireValidationPlanText(input.id, 'id'),
+    researchRunId: requireValidationPlanText(input.researchRunId, 'researchRunId'),
+    days: [
+      validationPlanDay(input.days[0], 1),
+      validationPlanDay(input.days[1], 2),
+      validationPlanDay(input.days[2], 3),
+      validationPlanDay(input.days[3], 4),
+      validationPlanDay(input.days[4], 5),
+      validationPlanDay(input.days[5], 6),
+      validationPlanDay(input.days[6], 7),
+    ],
+    createdAt: new Date(input.createdAt.getTime()),
+  };
+}
+
+function validationPlanDay(
+  value: ValidationPlanDay,
+  expectedDay: ValidationPlanDayNumber,
+): ValidationPlanDay {
+  if (value.day !== expectedDay) {
+    throw new InvalidValidationPlanError(
+      `days must be ordered from 1 to 7; expected day ${expectedDay}`,
+    );
+  }
+  if (value.activities.length === 0) {
+    throw new InvalidValidationPlanError(`day ${expectedDay} activities must not be empty`);
+  }
+  if (value.successCriteria.length === 0) {
+    throw new InvalidValidationPlanError(`day ${expectedDay} successCriteria must not be empty`);
+  }
+  return {
+    day: expectedDay,
+    objective: requireValidationPlanText(value.objective, `day ${expectedDay} objective`),
+    activities: value.activities.map((activity, index) =>
+      requireValidationPlanText(activity, `day ${expectedDay} activities[${index}]`)),
+    successCriteria: value.successCriteria.map((criterion, index) =>
+      requireValidationPlanText(criterion, `day ${expectedDay} successCriteria[${index}]`)),
+  };
+}
+
+function requireValidationPlanText(value: string, field: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new InvalidValidationPlanError(`${field} must be a non-empty string`);
+  }
+  return value.trim();
 }

@@ -7,6 +7,28 @@ import type {
   ResearchWorkflowStepId,
   ResearchWorkflowStepResult,
 } from './research-workflow';
+import type {
+  OpportunityAnalysisPlan,
+  OpportunityAnalysisPlanInput,
+  OpportunityAnalysisPlanProvider,
+} from './opportunity-analysis';
+
+export interface FakeOpportunityAnalysisPlanProviderOptions {
+  readonly plan?: OpportunityAnalysisPlan;
+  readonly error?: Error;
+}
+
+export class FakeOpportunityAnalysisPlanProvider implements OpportunityAnalysisPlanProvider {
+  public readonly calls: OpportunityAnalysisPlanInput[] = [];
+
+  public constructor(private readonly options: FakeOpportunityAnalysisPlanProviderOptions = {}) {}
+
+  public async createPlan(input: OpportunityAnalysisPlanInput): Promise<OpportunityAnalysisPlan> {
+    this.calls.push(input);
+    if (this.options.error !== undefined) throw this.options.error;
+    return this.options.plan ?? { opportunities: [] };
+  }
+}
 
 export interface FakeResearchWorkflowHandlerOptions {
   readonly results?: Readonly<Partial<Record<ResearchWorkflowStepId, ResearchWorkflowStepResult>>>;

@@ -36,6 +36,12 @@
       ],
       "@product-scout/agent/runtime-factory": [
         "../../apps/agent/src/runtime/DeepSeekHarnessRuntimeFactory.ts"
+      ],
+      "@product-scout/agent/search": [
+        "../../apps/agent/src/search/index.ts"
+      ],
+      "@product-scout/agent/workflow": [
+        "../../apps/agent/src/workflow/index.ts"
       ]
     },
     "noEmit": true,

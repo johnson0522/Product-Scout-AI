@@ -5,6 +5,7 @@ import { createEvidence } from '@product-scout/evidence';
 import {
   createDb,
   DrizzleClaimRepository,
+  DrizzleEvidenceAcquisitionRepository,
   DrizzleEvidenceStoreRepository,
   DrizzleResearchFindingRepository,
   projects,
@@ -51,8 +52,10 @@ describeIntegration('ResearchQualityAssessmentService with PostgreSQL trace', ()
   beforeAll(async () => {
     database = createDb(testDatabaseUrl);
     const evidenceRepository = new DrizzleEvidenceStoreRepository(database.db);
+    const evidenceAcquisitionRepository = new DrizzleEvidenceAcquisitionRepository(database.db);
     const findingService = new ResearchFindingService(
       evidenceRepository,
+      evidenceAcquisitionRepository,
       new DrizzleClaimRepository(database.db),
       new DrizzleResearchFindingRepository(database.db),
     );
@@ -86,13 +89,22 @@ describeIntegration('ResearchQualityAssessmentService with PostgreSQL trace', ()
         excerpt: 'Independent respondents describe the same recurring workflow.',
       },
     ]) {
-      await evidenceRepository.create(createEvidence({
+      const storedEvidence = createEvidence({
         id: input.id,
         source: { url: input.url },
         title: 'D2 quality evidence',
         excerpt: input.excerpt,
         retrievedAt: new Date('2026-10-19T09:10:11.234Z'),
-      }));
+      });
+      const fingerprintCharacter = input.id.endsWith('1') ? 'a' : 'b';
+      await evidenceAcquisitionRepository.acquire({
+        evidence: storedEvidence,
+        researchRunId: runId,
+        workflowInvocationKey: prefix + 'invocation',
+        stepId: 'market_understanding',
+        sourceFingerprint: `sha256:${fingerprintCharacter.repeat(64)}`,
+        capturedAt: storedEvidence.retrievedAt,
+      });
     }
 
     const claim = await findingService.createClaim({
@@ -127,6 +139,10 @@ describeIntegration('ResearchQualityAssessmentService with PostgreSQL trace', ()
       [runId],
     );
     await database.client.unsafe('delete from claims where research_run_id = $1', [runId]);
+    await database.client.unsafe(
+      'delete from evidence_acquisitions where research_run_id = $1',
+      [runId],
+    );
     await database.client.unsafe('delete from research_runs where id = $1', [runId]);
     await database.client.unsafe('delete from evidence_store where id like $1', [prefix + '%']);
     await database.client.unsafe('delete from projects where id = $1', [projectId]);

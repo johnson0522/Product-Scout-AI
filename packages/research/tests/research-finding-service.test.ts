@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   createEvidence,
+  type AcquireEvidenceInput,
+  type AcquireEvidenceResult,
   type Claim,
   type ClaimRepository,
   type Evidence,
+  type EvidenceAcquisition,
+  type EvidenceAcquisitionRepository,
+  type EvidenceAcquisitionScope,
   type EvidenceRepository,
   type ResearchFindingRepository,
 } from '@product-scout/evidence';
@@ -11,10 +16,35 @@ import type { Finding } from '@product-scout/domain';
 
 import {
   ClaimResearchRunMismatchError,
+  EvidenceNotAcquiredForResearchRunError,
   ReferencedClaimNotFoundError,
   ReferencedEvidenceNotFoundError,
   ResearchFindingService,
+  ResearchAggregateConflictError,
 } from '../src';
+
+class MemoryEvidenceAcquisitionRepository implements EvidenceAcquisitionRepository {
+  public constructor(private readonly associations: ReadonlySet<string>) {}
+
+  public async acquire(_input: AcquireEvidenceInput): Promise<AcquireEvidenceResult> {
+    throw new Error('not used');
+  }
+
+  public async getByScope(_scope: EvidenceAcquisitionScope): Promise<EvidenceAcquisition | null> {
+    return null;
+  }
+
+  public async listByResearchRunId(_researchRunId: string): Promise<readonly EvidenceAcquisition[]> {
+    return [];
+  }
+
+  public async isAssociatedWithResearchRun(
+    researchRunId: string,
+    evidenceId: string,
+  ): Promise<boolean> {
+    return this.associations.has(`${researchRunId}\u0000${evidenceId}`);
+  }
+}
 
 class MemoryEvidenceRepository implements EvidenceRepository {
   public constructor(private readonly values: readonly Evidence[]) {}
@@ -74,8 +104,15 @@ const evidence = createEvidence({
   retrievedAt: new Date('2026-10-19T00:00:00.000Z'),
 });
 
-function setup(evidenceValues: readonly Evidence[] = [evidence]) {
+function setup(
+  evidenceValues: readonly Evidence[] = [evidence],
+  associatedRuns: readonly string[] = ['run-1', 'run-2'],
+) {
   const evidenceRepository = new MemoryEvidenceRepository(evidenceValues);
+  const evidenceAcquisitions = new MemoryEvidenceAcquisitionRepository(new Set(
+    evidenceValues.flatMap((item) => associatedRuns.map((runId) =>
+      `${runId}\u0000${item.id}`)),
+  ));
   const claimRepository = new MemoryClaimRepository();
   const findingRepository = new MemoryFindingRepository();
   return {
@@ -84,6 +121,7 @@ function setup(evidenceValues: readonly Evidence[] = [evidence]) {
     findingRepository,
     service: new ResearchFindingService(
       evidenceRepository,
+      evidenceAcquisitions,
       claimRepository,
       findingRepository,
     ),
@@ -122,6 +160,14 @@ describe('ResearchFindingService', () => {
 
     await expect(service.createClaim(claimInput))
       .rejects.toBeInstanceOf(ReferencedEvidenceNotFoundError);
+    expect(claimRepository.values).toHaveLength(0);
+  });
+
+  it('rejects Evidence that was not acquired for the Claim ResearchRun', async () => {
+    const { service, claimRepository } = setup([evidence], []);
+
+    await expect(service.createClaim(claimInput))
+      .rejects.toBeInstanceOf(EvidenceNotAcquiredForResearchRunError);
     expect(claimRepository.values).toHaveLength(0);
   });
 
@@ -185,5 +231,34 @@ describe('ResearchFindingService', () => {
     };
     await expect(findingFailure.service.createFinding(findingInput))
       .rejects.toThrow('finding insert failed');
+  });
+
+  it('reuses identical Claims and Findings while rejecting id conflicts', async () => {
+    const { service, claimRepository, findingRepository } = setup();
+    const claim = await service.ensureClaim(claimInput);
+    const replayedClaim = await service.ensureClaim({
+      ...claimInput,
+      createdAt: new Date('2026-10-20T00:00:00.000Z'),
+    });
+    expect(replayedClaim).toBe(claimRepository.values[0]);
+    expect(claimRepository.values).toHaveLength(1);
+
+    await expect(service.ensureClaim({ ...claimInput, text: 'Different content.' }))
+      .rejects.toBeInstanceOf(ResearchAggregateConflictError);
+
+    const finding = await service.ensureFinding(findingInput);
+    const replayedFinding = await service.ensureFinding({
+      ...findingInput,
+      createdAt: new Date('2026-10-20T00:00:00.000Z'),
+    });
+    expect(replayedFinding).toBe(findingRepository.values[0]);
+    expect(findingRepository.values).toHaveLength(1);
+    expect(finding.id).toBe(replayedFinding.id);
+
+    await expect(service.ensureFinding({
+      ...findingInput,
+      description: 'Different content.',
+    })).rejects.toBeInstanceOf(ResearchAggregateConflictError);
+    expect(claim.id).toBe(replayedClaim.id);
   });
 });

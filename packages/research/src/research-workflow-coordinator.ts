@@ -174,6 +174,12 @@ export class InMemoryResearchWorkflowCoordinator implements ResearchWorkflowCoor
           isCancelled: () => cancellation.cancelled,
         });
       } catch (error: unknown) {
+        if (cancellation.cancelled) {
+          executions.set(stepId, transitionStep(running, 'cancelled', this.now()));
+          this.cancelPending(executions);
+          workflowStatus = transitionWorkflow(workflowStatus, 'cancelled');
+          break;
+        }
         const failure = executionFailure(error);
         executions.set(stepId, finishStep(running, 'failed', this.now(), failure));
         workflowFailure = failure;
@@ -201,7 +207,10 @@ export class InMemoryResearchWorkflowCoordinator implements ResearchWorkflowCoor
       }
 
       if (result.status === 'completed') {
-        executions.set(stepId, transitionStep(running, 'completed', this.now()));
+        executions.set(stepId, {
+          ...transitionStep(running, 'completed', this.now()),
+          result,
+        });
         results.set(stepId, result);
         continue;
       }
@@ -221,12 +230,16 @@ export class InMemoryResearchWorkflowCoordinator implements ResearchWorkflowCoor
         executions.set(stepId, {
           ...transitionStep(running, 'skipped', this.now()),
           skipReason: result.reason,
+          result,
         });
         results.set(stepId, result);
         continue;
       }
 
-      executions.set(stepId, finishStep(running, 'failed', this.now(), result.failure));
+      executions.set(stepId, {
+        ...finishStep(running, 'failed', this.now(), result.failure),
+        result,
+      });
       workflowFailure = result.failure;
       this.skipPending(executions, `Workflow stopped after step ${stepId} failed.`);
       workflowStatus = transitionWorkflow(workflowStatus, 'failed');

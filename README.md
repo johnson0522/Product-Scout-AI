@@ -136,6 +136,9 @@ Install dependencies:
 pnpm install
 ```
 
+Create and initialize the development database before running database-backed
+features: [Database setup](docs/database-setup.md).
+
 Run development:
 ```Bash
 pnpm dev
@@ -166,7 +169,44 @@ Required environment variables will be documented as the implementation progress
 
 ### Real web search (E1)
 
-Configure the root `.env` for either Brave or Tavily:
+The default search integration uses JerryLiu369's
+[agent-web-search-mcp](https://github.com/JerryLiu369/agent-web-search) through
+MCP stdio. Install Python 3.10+ and an isolated search environment:
+
+```powershell
+python -m venv .venv-search
+.\.venv-search\Scripts\python.exe -m pip install -r apps/agent/search-requirements.txt
+```
+
+Configure the root `.env` (use the absolute path to your installed executable):
+
+```dotenv
+SEARCH_PROVIDER=agent-web-search-mcp
+SEARCH_MCP_COMMAND='D:/AI Project/product-scout/.venv-search/Scripts/agent-web-search-mcp.exe'
+SEARCH_TIMEOUT_MS=60000
+SEARCH_MAX_RESPONSE_BYTES=1048576
+```
+
+On macOS/Linux, use `.venv-search/bin/python` to install and set
+`SEARCH_MCP_COMMAND` to the absolute `.venv-search/bin/agent-web-search-mcp` path.
+An executable installed on PATH can be configured as `agent-web-search-mcp`.
+The adapter enables only the keyless `ddgs`, `exa`, and `parallel` providers;
+it does not forward application API keys or database credentials. It calls only
+`web_search`, maps original `description` fields to snippets, deduplicates exact
+URLs, caps the combined output at the requested limit, and ignores synthesized
+answers. Failed backends may be omitted by the server when another succeeds;
+total provider failure remains an explicit tool error. Availability still depends
+on each backend's network access and rate limits.
+
+Each call starts and closes a dedicated MCP session, with a deadline covering
+startup, initialization, and search. `SEARCH_MAX_RESPONSE_BYTES` caps the decoded
+MCP tool result after SDK parsing, rather than limiting transport buffer memory.
+The Agent receives no shell or process-management tool. See
+[ADR-005](docs/decisions/005-mcp-search-provider.md) for the infrastructure boundary.
+Upstream attempts are capped at five seconds so that a slow backend does not
+consume the entire fan-out deadline; a backend can make several such attempts.
+
+Brave and Tavily remain available by selecting their HTTP adapter instead:
 
 ```dotenv
 SEARCH_PROVIDER=brave
@@ -182,6 +222,28 @@ prefix. Blank uses `https://api.search.brave.com/res/v1/web/search` for Brave or
 credentials, query parameters, or fragments. Only configure trusted endpoints:
 the selected endpoint receives the search API key. Keys stay on the server.
 
+### Production research runtime
+
+`POST /api/research` uses the complete application-owned Research Workflow.
+Configure an explicit DSH state directory and model credential; production does
+not fall back to the echo PoC or a mock search provider:
+
+```dotenv
+DSH_HOME=.dsh-runtime
+DEEPSEEK_API_KEY=your-model-key
+DSH_PROVIDER=
+DSH_MODEL=
+AGENT_MAX_SEARCHES=30
+AGENT_MAX_SOURCES=100
+AGENT_MAX_ROUNDS=3
+AGENT_TIMEOUT_MS=300000
+```
+
+The fixed workflow requires four Search calls. `AGENT_MAX_SEARCHES` and
+`AGENT_MAX_SOURCES` must each be at least four; invalid values fail at
+composition time. `AGENT_TIMEOUT_MS` bounds the complete workflow and each
+individual DSH reasoning operation.
+
 Run a live smoke check from the repository root (requires Node 20.6+ and a root
 `.env` file; this makes one real search request and may use provider quota):
 
@@ -190,7 +252,8 @@ pnpm --filter @product-scout/agent search:smoke "hvac software"
 ```
 
 The command prints tool lifecycle events to stderr and raw search results to
-stdout. It does not write to the database. Missing provider/key fails explicitly;
+stdout. It does not write to the database. Missing provider configuration (or
+missing API keys when using Brave/Tavily) fails explicitly;
 MockSearchProvider remains an explicitly selected test fixture only.
 
 For application composition, use the server-side `createSearchTool` export from
@@ -198,16 +261,16 @@ For application composition, use the server-side `createSearchTool` export from
 the process environment. The host application must load its environment before
 calling the factory; the smoke command loads the root `.env` itself.
 
-Requests default to ten results and are capped at twenty for both providers,
-without pagination or automatic retries. The ten-second deadline covers response
-body reads; the one-MiB limit applies to actual streamed bytes. Search snippets
+Requests default to ten results and are capped at twenty,
+without pagination or automatic retries. For Brave/Tavily, the ten-second default
+deadline covers response body reads; their one-MiB limit applies to actual streamed bytes. Search snippets
 remain untrusted source excerpts, not verified page content or generated answers.
 Structured provider failures are retained as `SearchToolExecutionError.cause`;
 events omit secrets and upstream response bodies.
 
-E1 makes search independently usable with the existing evidence ingestion
-service. Connecting it to `/api/research`, enforcing run-wide budgets, and
-generating reports remain E2 and later work.
+The production Gateway now connects Search and evidence ingestion to the full
+Finding, Opportunity, Report, and ValidationPlan workflow. Incremental event
+publication during execution and durable ResearchStep state remain later work.
 
 ## Architecture Documents
 - docs/architecture.md
@@ -220,3 +283,9 @@ generating reports remain E2 and later work.
 - docs/decisions/002-agent-runtime.md
 - docs/decisions/003-postgresql.md
 - docs/decisions/004-sse.md
+- docs/decisions/005-mcp-search-provider.md
+- docs/decisions/006-coordinator-owned-reasoning.md
+- docs/decisions/007-opportunity-submission-persistence.md
+- docs/decisions/008-evidence-backed-research-report.md
+- docs/decisions/009-seven-day-validation-plan.md
+- docs/decisions/010-production-research-workflow-activation.md

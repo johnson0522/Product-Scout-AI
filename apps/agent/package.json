@@ -6,7 +6,10 @@
   "exports": {
     ".": "./src/index.ts",
     "./runtime-factory": "./src/runtime/DeepSeekHarnessRuntimeFactory.ts",
-    "./search": "./src/search/index.ts"
+    "./workflow-runtime": "./src/runtime/ResearchWorkflowRuntimeFactory.ts",
+    "./search": "./src/search/index.ts",
+    "./synthesis": "./src/synthesis/index.ts",
+    "./workflow": "./src/workflow/index.ts"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -20,6 +23,7 @@
   },
   "dependencies": {
     "@deepseek-ai/dsh-sdk-client": "0.2.1-alpha.1",
+    "@modelcontextprotocol/sdk": "1.25.2",
     "@product-scout/domain": "workspace:*",
     "@product-scout/config": "workspace:*",
     "@product-scout/agent-sdk": "workspace:*",

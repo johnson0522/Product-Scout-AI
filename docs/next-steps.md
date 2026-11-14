@@ -136,10 +136,11 @@ ProductEvent (持久化) → SSE → 前端实时进度
 
 ## 3. 分阶段计划
 
-实施进度（2026-11-04）：E1 已加入 Brave/Tavily HTTP Provider、严格配置校验、
-生产搜索工厂及 `search:smoke` 独立验证入口。Mock 保留为显式测试替身；
-真实密钥调用需在配置供应商后单独验证。本文现状审核保留为实施前基线，
-E2 的 Gateway/Coordinator 接线和研究预算仍待实现。
+实施进度（2026-11-14）：E1 已加入真实 Search Provider。D3-E 至 D3-F 已完成
+Finding、Quality、Opportunity、Report 和 ValidationPlan 的完整应用层链路；
+D3-G-A 已把生产 Web Gateway 切换到该六步 Workflow，并接入整体 timeout 与
+固定四步 Search/Source 预算。本文现状审核保留为实施前基线；ResearchStep
+持久化、运行中增量事件发布和进程重启恢复仍待实现。
 
 E1 验证：`pnpm typecheck`、`pnpm test`、`pnpm lint` 均通过；新增 82 个测试，
 包含 HTTP fixture、配置/工厂、证据摄取联通与 Node CLI 加载回归。

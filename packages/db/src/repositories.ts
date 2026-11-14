@@ -5,7 +5,9 @@ import type {
   Project,
   ResearchConstraints,
   ResearchRun,
+  ResearchReport,
   Source,
+  ValidationPlan,
 } from '@product-scout/domain';
 
 export type ProjectCreateInput = Pick<Project, 'ownerId' | 'name'> & {
@@ -85,8 +87,48 @@ export interface EvidenceRepository {
 
 export type OpportunityCreateInput = Omit<Opportunity, 'id'>;
 
+export class OpportunityPersistenceConflictError extends Error {
+  public constructor(public readonly opportunityId: Opportunity['id']) {
+    super(`Opportunity ${opportunityId} already exists with different content`);
+    this.name = 'OpportunityPersistenceConflictError';
+  }
+}
+
 export interface OpportunityRepository {
   findById(id: Opportunity['id']): Promise<Opportunity | null>;
   listByResearchRunId(researchRunId: Opportunity['researchRunId']): Promise<readonly Opportunity[]>;
   create(input: OpportunityCreateInput): Promise<Opportunity>;
+  ensure(opportunity: Opportunity): Promise<Opportunity>;
+}
+
+export class ResearchReportPersistenceConflictError extends Error {
+  public constructor(public readonly reportId: ResearchReport['id']) {
+    super(`ResearchReport ${reportId} already exists with different content`);
+    this.name = 'ResearchReportPersistenceConflictError';
+  }
+}
+
+export interface ResearchReportRepository {
+  findById(id: ResearchReport['id']): Promise<ResearchReport | null>;
+  getById(id: ResearchReport['id']): Promise<ResearchReport | null>;
+  listByResearchRunId(
+    researchRunId: ResearchReport['researchRunId'],
+  ): Promise<readonly ResearchReport[]>;
+  ensure(report: ResearchReport): Promise<ResearchReport>;
+}
+
+export class ValidationPlanPersistenceConflictError extends Error {
+  public constructor(public readonly validationPlanId: ValidationPlan['id']) {
+    super(`ValidationPlan ${validationPlanId} already exists with different content`);
+    this.name = 'ValidationPlanPersistenceConflictError';
+  }
+}
+
+export interface ValidationPlanRepository {
+  findById(id: ValidationPlan['id']): Promise<ValidationPlan | null>;
+  getById(id: ValidationPlan['id']): Promise<ValidationPlan | null>;
+  listByResearchRunId(
+    researchRunId: ValidationPlan['researchRunId'],
+  ): Promise<readonly ValidationPlan[]>;
+  ensure(plan: ValidationPlan): Promise<ValidationPlan>;
 }

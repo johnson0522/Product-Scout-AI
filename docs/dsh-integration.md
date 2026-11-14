@@ -1,7 +1,10 @@
 # DeepSeek Harness Integration
 
-本文基于 DeepSeek Harness 官方仓库 `master` 在 2026-10-03 的提交
-`5badb15009ae1756c3afe0ae0cef1faafc290ccc`，以及同一提交中的公开 README、包 README、TypeScript 源码和 Cordis 教程。该项目当前版本是 `0.2.1-alpha.1`，官方明确将其标记为 Developer Preview，并警告会发生 breaking changes。
+PoC 研究最初基于 DeepSeek Harness 官方仓库 2026-10-03 的提交
+`5badb15009ae1756c3afe0ae0cef1faafc290ccc`。D3-E-C 在 2026-11-14 又核对了
+官方仓库提交 `39163dd30f703a79079e2d2446545cff3c453738` 的 SDK API、协议文档和
+Cordis Tool 教程。工作区继续固定使用 `0.2.1-alpha.1`，不随官方
+`0.2.2-rc.3` 自动升级。DSH 仍是 Developer Preview，可能发生 breaking changes。
 
 ## 1. 当前架构
 
@@ -148,9 +151,40 @@ pnpm --filter @product-scout/agent poc
 
 成功时 stdout 返回 JSON，至少包含 `sessionId`、`finalResponse` 和 `toolCalls`。SDK 子进程 stdout 保留给 JSON-RPC；诊断信息应在 stderr。当前协议没有中途取消或 per-prompt result，因此这些能力不在 PoC 中宣称。
 
+## 12. D3-E-C 结构化推理边界
+
+D3-E-C 不修改现有 PoC，而是为 Research synthesis 增加独立适配器：
+
+```text
+ResearchSynthesisPlanProvider
+  -> AgentRuntimeReasoner
+  -> DeepSeekHarnessReasoner
+  -> product_scout_submit_synthesis
+```
+
+当前 SDK 没有原生的 JSON Schema 最终响应 API。`RunResult.finalResponse` 是文本，
+因此不能作为结构化业务结果。适配器只读取公开 `RunResult.events` 中的
+`tool/call` 与 `tool/result`：用 `callId` 配对，确认 Tool 成功后，解析
+`tool/call.arguments` 的原始 JSON，再由 Product Scout 的严格 parser 和
+Evidence/Claim 语义校验完成双层验证。无提交、多个成功提交、未配对结果、
+Tool 错误或非法 JSON 都是显式失败。
+
+专用 Cordis patch 禁用 `persistent-bash`、`persistent-pwsh` 和
+`mcp-resources`，只加入无副作用的提交 Tool。每次调用使用独立 runtime、显式
+`dshHome`、请求超时和子进程环境 allowlist，并在 `finally` 中关闭。Evidence
+被标记为不可信数据且有数量、单条 excerpt 和总 prompt 大小限制。Tool 不写
+数据库；Coordinator 及现有 application services 继续拥有持久化。
+
+本阶段默认测试注入 Fake Reasoner 或 Fake Harness，不需要 API key。真实模型
+验证属于独立 smoke test；未配置 `DEEPSEEK_API_KEY` 时必须报告 BLOCKED。
+
 ## 官方依据
 
 - [官方仓库 README（固定提交）](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/README.md)
+- [D3-E-C 核对的官方仓库提交](https://github.com/deepseek-ai/deepseek-harness/tree/39163dd30f703a79079e2d2446545cff3c453738)
+- [当前 SDK API source](https://github.com/deepseek-ai/deepseek-harness/blob/39163dd30f703a79079e2d2446545cff3c453738/packages/sdk/client/src/api.ts)
+- [当前 SDK protocol README](https://github.com/deepseek-ai/deepseek-harness/blob/39163dd30f703a79079e2d2446545cff3c453738/packages/sdk/protocol/README.md)
+- [当前 Cordis Tool tutorial](https://github.com/deepseek-ai/deepseek-harness/blob/39163dd30f703a79079e2d2446545cff3c453738/docs/cordis-tutorial/07-into-the-harness.md)
 - [`@deepseek-ai/dsh-sdk-client` README](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/sdk/client/README.md)
 - [`@deepseek-ai/dsh-sdk-client` API source](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/sdk/client/src/api.ts)
 - [SDK protocol README](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/packages/sdk/protocol/README.md)

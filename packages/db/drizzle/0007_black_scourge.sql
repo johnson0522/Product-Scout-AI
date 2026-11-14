@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS "validation_plans_research_run_idx" ON "validation_plans" ("research_run_id");

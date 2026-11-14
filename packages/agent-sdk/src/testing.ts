@@ -1,14 +1,50 @@
 import type {
   AgentEvent,
+  AgentReasoningInput,
+  AgentReasoningResult,
   AgentRunInput,
   AgentRunResult,
   AgentRuntime,
   AgentRuntimeFactory,
+  AgentRuntimeReasoner,
   AgentSession,
   AgentSessionId,
   AgentTrajectory,
   CreateSessionInput,
 } from './index';
+
+export interface FakeReasonerOptions {
+  readonly output?: AgentReasoningResult['output'];
+  readonly events?: readonly AgentEvent[];
+  readonly error?: Error;
+  readonly gate?: Promise<void>;
+}
+
+/** Deterministic structured reasoner for application-layer tests. */
+export class FakeReasoner implements AgentRuntimeReasoner {
+  public readonly calls: {
+    reason: AgentReasoningInput[];
+    cancel: string[];
+  } = { reason: [], cancel: [] };
+
+  public constructor(private readonly options: FakeReasonerOptions = {}) {}
+
+  public async reason(input: AgentReasoningInput): Promise<AgentReasoningResult> {
+    this.calls.reason.push(input);
+    await this.options.gate;
+    if (this.options.error !== undefined) throw this.options.error;
+    return {
+      requestId: input.requestId,
+      outputContract: input.outputContract,
+      output: this.options.output ?? null,
+      events: [...(this.options.events ?? [])],
+    };
+  }
+
+  public async cancel(requestId: string): Promise<void> {
+    this.calls.cancel.push(requestId);
+  }
+}
 
 export interface FakeRuntimeOptions {
   readonly events?: readonly AgentEvent[];

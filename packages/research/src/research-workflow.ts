@@ -81,6 +81,7 @@ export interface ResearchWorkflowStepExecution {
   readonly completedAt?: Date;
   readonly skipReason?: string;
   readonly failure?: ResearchWorkflowFailure;
+  readonly result?: ResearchWorkflowStepResult;
 }
 
 export interface ResearchWorkflowStepDiagnostic {
@@ -88,11 +89,51 @@ export interface ResearchWorkflowStepDiagnostic {
   readonly message: string;
 }
 
+export type ResearchWorkflowArtifact =
+  | {
+      readonly kind: 'evidence';
+      readonly evidenceId: string;
+      readonly stepId: Exclude<
+        ResearchWorkflowStepId,
+        'opportunity_analysis' | 'report_generation'
+      >;
+    }
+  | {
+      readonly kind: 'finding';
+      readonly findingId: string;
+      readonly claimIds: readonly string[];
+    }
+  | {
+      readonly kind: 'quality_assessment';
+      readonly findingId: string;
+      readonly status: 'sufficient' | 'insufficient' | 'conflicted' | 'needs_review';
+      readonly issueCodes: readonly string[];
+      readonly requiresHumanReview: boolean;
+    }
+  | {
+      readonly kind: 'opportunity';
+      readonly opportunityId: string;
+      readonly findingIds: readonly string[];
+      readonly evidenceIds: readonly string[];
+    }
+  | {
+      readonly kind: 'report';
+      readonly reportId: string;
+      readonly findingIds: readonly string[];
+      readonly opportunityIds: readonly string[];
+    }
+  | {
+      readonly kind: 'validation_plan';
+      readonly validationPlanId: string;
+      readonly reportId: string;
+    };
+
 export type ResearchWorkflowStepResult =
   | {
       readonly status: 'completed';
       readonly stepId: ResearchWorkflowStepId;
       readonly artifactIds: readonly string[];
+      readonly artifacts?: readonly ResearchWorkflowArtifact[];
       readonly diagnostics?: readonly ResearchWorkflowStepDiagnostic[];
     }
   | {
@@ -120,6 +161,17 @@ export const DEFAULT_RESEARCH_WORKFLOW_DEFINITION: ResearchWorkflowDefinition = 
     ]),
     step('report_generation', ['opportunity_analysis']),
   ],
+};
+
+/**
+ * A deliberately partial workflow whose contract ends after evidence-backed
+ * Finding and Quality artifacts. It must not be presented as a full V0.1 report.
+ */
+export const RESEARCH_ANALYSIS_WORKFLOW_DEFINITION: ResearchWorkflowDefinition = {
+  id: 'product-scout-analysis-v0.1',
+  steps: DEFAULT_RESEARCH_WORKFLOW_DEFINITION.steps.filter(
+    (definition) => definition.id !== 'report_generation',
+  ),
 };
 
 export class InvalidResearchWorkflowInputError extends Error {

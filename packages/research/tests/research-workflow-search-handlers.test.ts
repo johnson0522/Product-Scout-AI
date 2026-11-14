@@ -1,25 +1,70 @@
 import { describe, expect, it } from 'vitest';
-import type { Evidence, EvidenceRepository } from '@product-scout/evidence';
+import {
+  createEvidenceAcquisition,
+  type AcquireEvidenceInput,
+  type AcquireEvidenceResult,
+  type Evidence,
+  type EvidenceAcquisition,
+  type EvidenceAcquisitionRepository,
+  type EvidenceAcquisitionScope,
+} from '@product-scout/evidence';
 
 import {
   DEFAULT_RESEARCH_WORKFLOW_DEFINITION,
   InMemoryResearchWorkflowCoordinator,
-  SearchResultEvidenceIngestion,
+  SearchResultEvidenceAcquisitionIngestion,
   ResearchWorkflowSearchHandlers,
   SearchTool,
   type ResearchWorkflowDefinition,
   type SearchResultItem,
 } from '../src';
 
-class MemoryEvidenceRepository implements EvidenceRepository {
+class MemoryEvidenceAcquisitionRepository implements EvidenceAcquisitionRepository {
   public readonly values: Evidence[] = [];
+  public readonly acquisitions: EvidenceAcquisition[] = [];
 
-  public async create(evidence: Evidence): Promise<void> {
-    this.values.push(evidence);
+  public async acquire(input: AcquireEvidenceInput): Promise<AcquireEvidenceResult> {
+    const existingAcquisition = await this.getByScope(input);
+    if (existingAcquisition !== null) {
+      const evidence = this.values.find((value) =>
+        value.id === existingAcquisition.evidenceId);
+      if (evidence === undefined) throw new Error('missing acquired evidence');
+      return { status: 'existing', evidence, acquisition: existingAcquisition };
+    }
+    const evidence = this.values.find((value) => value.id === input.evidence.id)
+      ?? input.evidence;
+    if (!this.values.includes(evidence)) this.values.push(evidence);
+    const acquisition = createEvidenceAcquisition({
+      id: `acquisition-${this.acquisitions.length + 1}`,
+      evidenceId: evidence.id,
+      researchRunId: input.researchRunId,
+      workflowInvocationKey: input.workflowInvocationKey,
+      stepId: input.stepId,
+      sourceFingerprint: input.sourceFingerprint,
+      capturedAt: input.capturedAt,
+    });
+    this.acquisitions.push(acquisition);
+    return { status: 'created', evidence, acquisition };
   }
 
-  public async getById(id: string): Promise<Evidence | null> {
-    return this.values.find((value) => value.id === id) ?? null;
+  public async getByScope(scope: EvidenceAcquisitionScope): Promise<EvidenceAcquisition | null> {
+    return this.acquisitions.find((value) =>
+      value.researchRunId === scope.researchRunId
+      && value.workflowInvocationKey === scope.workflowInvocationKey
+      && value.stepId === scope.stepId
+      && value.sourceFingerprint === scope.sourceFingerprint) ?? null;
+  }
+
+  public async listByResearchRunId(researchRunId: string): Promise<readonly EvidenceAcquisition[]> {
+    return this.acquisitions.filter((value) => value.researchRunId === researchRunId);
+  }
+
+  public async isAssociatedWithResearchRun(
+    researchRunId: string,
+    evidenceId: string,
+  ): Promise<boolean> {
+    return this.acquisitions.some((value) =>
+      value.researchRunId === researchRunId && value.evidenceId === evidenceId);
   }
 }
 
@@ -35,7 +80,7 @@ const definition: ResearchWorkflowDefinition = {
 
 function createHandlers(
   items: readonly SearchResultItem[],
-  repository: MemoryEvidenceRepository,
+  repository: MemoryEvidenceAcquisitionRepository,
 ) {
   const search = new SearchTool({
     search: async (query) => ({ query: query.query, items }),
@@ -43,7 +88,7 @@ function createHandlers(
   let nextId = 0;
   return new ResearchWorkflowSearchHandlers({
     search,
-    ingestion: new SearchResultEvidenceIngestion(repository, {
+    ingestion: new SearchResultEvidenceAcquisitionIngestion(repository, {
       idGenerator: {
         generate: () => `evidence-${++nextId}`,
       },
@@ -55,7 +100,7 @@ function createHandlers(
 
 describe('ResearchWorkflowSearchHandlers', () => {
   it('passes ResearchRun context through SearchTool and returns persisted evidence ids', async () => {
-    const repository = new MemoryEvidenceRepository();
+    const repository = new MemoryEvidenceAcquisitionRepository();
     const handlers = createHandlers([{
       title: 'Market result',
       url: 'https://example.test/market',
@@ -74,11 +119,12 @@ describe('ResearchWorkflowSearchHandlers', () => {
     expect(execution.status).toBe('completed');
     expect(execution.steps[0]?.status).toBe('completed');
     expect(repository.values).toHaveLength(4);
+    expect(repository.acquisitions).toHaveLength(4);
     expect(execution.steps[0]?.stepId).toBe('market_understanding');
   });
 
   it('keeps partial persistence as a completed step with diagnostics', async () => {
-    const repository = new MemoryEvidenceRepository();
+    const repository = new MemoryEvidenceAcquisitionRepository();
     const search = new SearchTool({
       search: async (query) => ({
         query: query.query,
@@ -90,7 +136,7 @@ describe('ResearchWorkflowSearchHandlers', () => {
     });
     const handlers = new ResearchWorkflowSearchHandlers({
       search,
-        ingestion: new SearchResultEvidenceIngestion(repository, {
+        ingestion: new SearchResultEvidenceAcquisitionIngestion(repository, {
         idGenerator: { generate: () => 'evidence-partial' },
       }),
     });
@@ -112,7 +158,7 @@ describe('ResearchWorkflowSearchHandlers', () => {
   });
 
   it('fails a step when search cannot produce any persisted evidence', async () => {
-    const repository = new MemoryEvidenceRepository();
+    const repository = new MemoryEvidenceAcquisitionRepository();
     const search = new SearchTool({
       search: async () => ({
         query: 'failure',
@@ -121,7 +167,7 @@ describe('ResearchWorkflowSearchHandlers', () => {
     });
     const handlers = new ResearchWorkflowSearchHandlers({
       search,
-      ingestion: new SearchResultEvidenceIngestion(repository, {
+      ingestion: new SearchResultEvidenceAcquisitionIngestion(repository, {
         idGenerator: { generate: () => 'unused' },
       }),
     });
@@ -142,7 +188,7 @@ describe('ResearchWorkflowSearchHandlers', () => {
   });
 
   it('stops the default workflow at the explicitly unimplemented analysis boundary', async () => {
-    const repository = new MemoryEvidenceRepository();
+    const repository = new MemoryEvidenceAcquisitionRepository();
     const handlers = createHandlers([{
       title: 'Research result',
       url: 'https://example.test/result',
@@ -163,5 +209,35 @@ describe('ResearchWorkflowSearchHandlers', () => {
       .toMatchObject({ status: 'failed', failure: { kind: 'precondition_failed' } });
     expect(execution.steps.find((step) => step.stepId === 'report_generation')?.status)
       .toBe('skipped');
+  });
+
+  it('reuses the first Evidence when the same acquisition scope is replayed', async () => {
+    const repository = new MemoryEvidenceAcquisitionRepository();
+    const handlers = createHandlers([{
+      title: 'Stable result',
+      url: 'https://example.test/stable?b=2&a=1#section',
+      snippet: 'Stable excerpt.',
+    }], repository);
+    const handler = handlers.handlers.get('market_understanding');
+    if (handler === undefined) throw new Error('missing market handler');
+    const input = {
+      workflow: {
+        researchRunId: 'run-replay',
+        goal: 'workflow automation',
+        idempotencyKey: 'invocation-replay',
+      },
+      definition: definition.steps[0]!,
+      attempt: 1,
+      completedSteps: new Map(),
+      isCancelled: () => false,
+    };
+
+    const first = await handler(input);
+    const replay = await handler(input);
+
+    expect(first.status).toBe('completed');
+    expect(replay).toMatchObject(first);
+    expect(repository.values).toHaveLength(1);
+    expect(repository.acquisitions).toHaveLength(1);
   });
 });

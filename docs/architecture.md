@@ -179,6 +179,22 @@ registered with DSH or exposed as an Agent shell capability. Production workflow
 composition through the Gateway and run-wide budgets remain E2; E1 alone does
 not make the research endpoint execute a complete research run.
 
+ADR-005 adds a selectable MCP search adapter at the existing composition boundary:
+
+```text
+createSearchTool -> SearchTool -> McpSearchProvider (apps/agent)
+                                   -> MCP stdio -> agent-web-search-mcp
+                                                   -> DDGS / Exa / Parallel
+```
+
+The fixed host-controlled executable and tool name are not Agent capabilities.
+The adapter forwards no application secrets, maps only original source rows,
+ignores generated answers, deduplicates URLs, and caps combined results. A single
+deadline covers startup through search, with session cleanup after every call.
+The decoded MCP response is size-checked after SDK parsing. See
+`docs/decisions/005-mcp-search-provider.md` for the infrastructure allowance and
+buffer, partial-provider-failure, and search-budget limitations.
+
 V0.1-C2-A defines the evidence boundary without adding persistence:
 
 ```text
@@ -481,3 +497,262 @@ cooperative cancellation. This is not durable idempotency, cross-process
 coordination, automatic retry, or exactly-once execution. Fake handlers and
 application-level tests exercise these semantics before real service adapters
 are introduced.
+
+### Evidence Acquisition and Scoped Idempotency (V0.1-D3-D-B)
+
+D3-C connects the first four workflow steps to the existing Search and
+Evidence services. D3-D-B separates canonical Evidence identity from the fact
+that a ResearchRun collected or explicitly reused it:
+
+```text
+evidence_store
+      ↑
+evidence_acquisitions
+      ↓
+research_runs
+```
+
+`evidence_store` remains compatible with the C2 contract and does not gain a
+ResearchRun foreign key or URL uniqueness constraint. A successful acquisition
+records the ResearchRun, workflow invocation, step, versioned source
+fingerprint, and capture time. The scoped unique key is:
+
+```text
+research_run_id + workflow_invocation_key + step_id + source_fingerprint
+```
+
+The fingerprint is SHA-256 over a normalized URL, title, and excerpt. It is an
+operation identity component, not the Evidence primary key. Matching URLs do
+not automatically merge Evidence across ResearchRuns. Reuse across runs is
+explicit and creates an acquisition for the target run.
+
+The Drizzle acquisition repository atomically creates or reuses Evidence and
+creates the acquisition. Concurrent duplicate scopes return the winning record
+and roll back losing Evidence inserts. Claims may only be created from Evidence
+associated with the Claim's ResearchRun. Existing stored Claims remain readable
+without migration backfill.
+
+### Explicit Research Synthesis and Quality Integration (V0.1-D3-E-B)
+
+D3-E-B adds a dependency-injected application boundary between collected
+Evidence and research conclusions:
+
+```text
+typed workflow Evidence artifacts
+        ↓
+ResearchSynthesisPlanProvider
+        ↓
+explicit Claim / Finding / relationship drafts
+        ↓
+ResearchFindingService
+        ↓
+ResearchQualityAssessmentService
+```
+
+The provider must explicitly supply Claim text, Finding content, Claim-to-
+Evidence relationships, and Evidence semantic/source classifications. The
+workflow does not turn excerpts into Claims, assume that Evidence supports a
+Claim, or infer classifications. A production LLM, Skill, or DSH provider is
+not implemented by this phase; tests inject deterministic providers.
+
+The analysis handler accepts only typed Evidence artifacts emitted by completed
+search steps. Plan references outside that set, unknown Claim references, and
+duplicate identities or assessments are rejected before persistence. Claim and
+Finding database IDs are deterministically derived from the ResearchRun,
+workflow invocation, and stable plan-local IDs. Replays reuse identical
+aggregates and reject content conflicts. Claim creation can remain committed
+when a later Finding or quality
+operation fails; D3-E-B does not claim a global synthesis transaction.
+
+Quality assessment runs immediately after each Finding is available and remains
+non-persistent. `sufficient`, `needs_review`, `insufficient`, and `conflicted`
+are research quality outcomes rather than technical execution states. The
+analysis step completes with typed Finding and Quality artifacts plus explicit
+diagnostics for non-sufficient outcomes. Report generation, Opportunity domain
+creation, scoring, durable workflow execution, and a real synthesis provider
+remain outside this phase. No database schema or migration changes in D3-E-B.
+
+### DSH-Backed Structured Synthesis (V0.1-D3-E-C)
+
+D3-E-C supplies a production-capable synthesis boundary without transferring
+workflow ownership to DeepSeek Harness:
+
+```text
+InMemoryResearchWorkflowCoordinator
+        -> ResearchWorkflowAnalysisHandler
+        -> DshResearchSynthesisPlanProvider
+        -> AgentRuntimeReasoner
+        -> DeepSeekHarnessReasoner
+        -> product_scout_submit_synthesis
+```
+
+`AgentRuntimeReasoner` is a narrow, runtime-neutral port for one bounded
+structured reasoning operation. It does not expose DSH sessions, Cordis, or
+database contracts. The provider loads referenced Evidence through the existing
+repository, builds a bounded prompt with external content explicitly marked as
+untrusted, and validates the returned `ResearchSynthesisPlan` before the existing
+analysis handler performs semantic reference validation and persistence.
+
+The DSH adapter accepts exactly one successful schema-validated submission tool
+call. It pairs `tool/call` with `tool/result`, parses the raw call arguments as
+unknown JSON, and never treats assistant prose or `finalResponse` as business
+data. The submission tool has no persistence or external side effects.
+
+Each reasoning operation uses an isolated Harness lifecycle, explicit DSH home,
+explicit environment allowlist, bounded timeout, and a synthesis-only profile
+patch that disables persistent shells and MCP resources. DSH remains pinned to
+`0.2.1-alpha.1`; the existing PoC is unchanged. See ADR-006.
+
+### Analysis Workflow Runtime Composition (V0.1-D3-E-D)
+
+D3-E-D distinguishes the complete report contract from the currently executable
+analysis contract:
+
+```text
+product-scout-research-v0.1
+  Search -> Evidence -> Finding -> Quality -> Report
+  missing Report => failed
+
+product-scout-analysis-v0.1
+  Search -> Evidence -> Finding -> Quality
+  successful Quality evaluation => completed
+```
+
+`ResearchWorkflowRuntime` adapts the versioned Analysis Workflow to the existing
+`AgentRuntime` contract. It owns local sessions, maps workflow step outcomes to
+transport-independent Agent events, and coordinates cancellation with both the
+in-memory Coordinator and the active `AgentRuntimeReasoner` request.
+
+`createAnalysisWorkflowRuntimeFactory` is a dependency-injected composition root
+for the existing Search, Evidence acquisition, Finding, Quality, and synthesis
+services. Concrete database connections, Search provider configuration, and the
+Reasoner transport remain caller-owned. The Web Gateway production composition
+is intentionally unchanged in D3-E-D; activating the analysis-only workflow at
+`POST /api/research` requires a separate product/API acceptance decision so it
+cannot be mistaken for full report completion.
+
+### Evidence-Backed Opportunity Scoring Contract (V0.1-D3-F-A)
+
+D3-F-A defines the pure application boundary between quality-controlled
+Findings and future persisted Opportunities:
+
+```text
+Finding + Quality status + derived Evidence IDs
+        -> OpportunityAnalysisPlanProvider
+        -> strict Opportunity draft contract
+        -> deterministic calculateOpportunityScore
+        -> ScoredOpportunityProposal
+```
+
+The provider supplies product fields, references to known Findings, seven
+dimension inputs, and an explanation for every dimension. It cannot supply the
+weighted total. The application validates every `0-100` input and calls the
+existing domain scoring function, preserving its fixed weights and reproducible
+rounding.
+
+Opportunity Evidence IDs are derived from referenced Findings; provider output
+cannot inject Evidence IDs. Only Findings with `sufficient` quality and no
+human-review requirement may support a proposal. An empty proposal list is a
+valid evidence-first outcome and does not cause the application to fabricate an
+opportunity.
+
+This phase does not persist Opportunities, change the database schema, invoke
+DSH, alter the Workflow handler, or generate a Report. Persistence idempotency,
+DSH structured submission, and workflow integration remain later phases.
+
+### Evidence-backed Research Report Generation (V0.1-D3-F-C)
+
+D3-F-C completes the default six-step workflow without changing the existing
+five-step Analysis Workflow. Report generation consumes only explicit artifacts
+from completed opportunity analysis:
+
+```text
+quality-approved Findings + persisted Opportunities
+        -> ResearchReportPlanProvider
+        -> AgentRuntimeReasoner
+        -> product_scout_submit_report
+        -> strict parser and reference validation
+        -> ResearchReportStore
+```
+
+Every report section references at least one available Finding or Opportunity.
+Report content contains high-level conclusions and limitations, not private
+chain-of-thought. Model output cannot choose the persisted report ID or
+timestamp. The deterministic report UUID is derived from ResearchRun and
+workflow invocation identity; an identical replay returns the existing report,
+while conflicting content is rejected.
+
+`research_reports` is business data owned by PostgreSQL and has one row per
+ResearchRun. The DSH submission Tool validates structure but performs no
+persistence. A dedicated DSH patch exposes only the report submission Tool and
+continues to disable shell and MCP resources. DSH remains pinned to the current
+version.
+
+`createAnalysisWorkflowRuntimeFactory` retains the partial
+`product-scout-analysis-v0.1` contract. The new
+`createResearchWorkflowRuntimeFactory` composes `product-scout-research-v0.1`
+and completes only after a traceable report is persisted. At D3-F-C,
+ValidationPlan, report HTTP presentation, and production Gateway switching
+remain separate work; D3-F-D adds ValidationPlan as described below.
+
+### Seven-day Validation Plan (V0.1-D3-F-D)
+
+The fixed `report_generation` step produces two separately persisted business
+artifacts:
+
+```text
+ResearchReport + persisted Opportunities
+        -> ValidationPlanProvider
+        -> AgentRuntimeReasoner
+        -> product_scout_submit_validation_plan
+        -> strict Day 1-7 validation
+        -> ValidationPlanStore
+```
+
+The plan contains exactly seven ordered days. Each day has a focused objective,
+one or more concrete activities, and measurable success criteria. The model
+cannot choose the database ID, ResearchRun association, or timestamps.
+
+ValidationPlan persistence uses deterministic invocation identity and one row
+per ResearchRun. Identical replay returns the existing plan; conflicting replay
+is rejected. Report and plan writes remain separate idempotent aggregates: if
+plan generation fails after Report persistence, the step fails and a retry
+reuses the Report before resuming the plan.
+
+An empty Opportunity result is valid for the partial Analysis Workflow, but the
+full workflow does not fabricate a product validation plan without a persisted
+Opportunity. DSH remains isolated behind `AgentRuntimeReasoner` and pinned to
+the existing version. API/UI presentation and production Gateway switching are
+not part of D3-F-D.
+
+### Production Research Workflow Activation (V0.1-D3-G-A)
+
+The Web production Gateway now injects the complete application-owned workflow
+instead of the earlier echo-only DSH PoC runtime:
+
+```text
+POST /api/research
+  -> DefaultAgentGateway
+  -> AgentRuntimeFactory
+  -> ResearchWorkflowRuntime
+  -> Coordinator
+     -> Search / Evidence acquisition
+     -> Finding / deterministic Quality control
+     -> Opportunity scoring and persistence
+     -> ResearchReport and ValidationPlan persistence
+```
+
+Concrete DSH reasoners remain inside `apps/agent`. Each structured operation
+uses its dedicated patch and submission Tool; `apps/web` supplies only Search
+and Repository implementations. Production configuration has no Mock or PoC
+fallback and requires an explicit `DSH_HOME`.
+
+The runtime applies `AGENT_TIMEOUT_MS` as the overall workflow deadline. The
+fixed graph requires four searches, and the configured source budget is split
+across the four research steps. Timeout cancels both the Coordinator and active
+reasoners and returns failure, never completion.
+
+This activation does not make the process-local Coordinator durable. Gateway
+trajectory events are still published after `run()` returns rather than during
+execution. Durable ResearchStep updates, restart recovery, presentation APIs,
+and truly live incremental event delivery remain later phases. See ADR-010.

@@ -1,11 +1,22 @@
-export interface SearchConfig {
+interface SearchLimits {
+  readonly timeoutMs: number;
+  readonly maxResponseBytes: number;
+}
+
+export interface HttpSearchConfig extends SearchLimits {
   readonly provider: 'brave' | 'tavily';
   readonly apiKey: string;
   /** Complete search endpoint, not an origin or API prefix. */
   readonly baseUrl?: string;
-  readonly timeoutMs: number;
-  readonly maxResponseBytes: number;
 }
+
+export interface McpSearchConfig extends SearchLimits {
+  readonly provider: 'agent-web-search-mcp';
+  /** Server-controlled executable path; never a shell command or agent input. */
+  readonly command: string;
+}
+
+export type SearchConfig = HttpSearchConfig | McpSearchConfig;
 
 export class SearchConfigError extends Error {
   public constructor(message: string) {
@@ -15,10 +26,24 @@ export class SearchConfigError extends Error {
 }
 
 /** Read lazily at the search composition boundary; never fall back to fixtures. */
-export function readSearchConfig(env: NodeJS.ProcessEnv = process.env): SearchConfig {
+export function readSearchConfig(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): SearchConfig {
   const provider = env.SEARCH_PROVIDER?.trim();
+  if (provider === 'agent-web-search-mcp') {
+    const command = env.SEARCH_MCP_COMMAND?.trim() || 'agent-web-search-mcp';
+    if (/[\r\n\0]/.test(command)) {
+      throw new SearchConfigError('SEARCH_MCP_COMMAND must be a single executable path');
+    }
+    return {
+      provider,
+      command,
+      timeoutMs: positiveInteger(env.SEARCH_TIMEOUT_MS, 60_000, 'SEARCH_TIMEOUT_MS', 2_147_483_647),
+      maxResponseBytes: positiveInteger(env.SEARCH_MAX_RESPONSE_BYTES, 1_048_576, 'SEARCH_MAX_RESPONSE_BYTES'),
+    };
+  }
   if (provider !== 'brave' && provider !== 'tavily') {
-    throw new SearchConfigError('SEARCH_PROVIDER must be brave or tavily');
+    throw new SearchConfigError('SEARCH_PROVIDER must be brave or tavily or agent-web-search-mcp');
   }
   const apiKey = env.SEARCH_API_KEY?.trim();
   if (!apiKey || /[\r\n]/.test(apiKey)) {

@@ -1,8 +1,16 @@
+import { randomUUID } from 'node:crypto';
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, DrizzleEvidenceStoreRepository } from '@product-scout/db';
+import {
+  createDb,
+  DrizzleEvidenceAcquisitionRepository,
+  projects,
+  researchRuns,
+  users,
+} from '@product-scout/db';
 
 import {
-  SearchResultEvidenceIngestion,
+  SearchResultEvidenceAcquisitionIngestion,
   SearchTool,
   SearchToolExecutionError,
   type EvidenceIdGenerator,
@@ -19,6 +27,9 @@ if (!testDatabaseAuthorized) {
 
 const describeIntegration = testDatabaseAuthorized ? describe : describe.skip;
 const evidencePrefix = `ingestion-integration-${Date.now()}-`;
+const ownerId = randomUUID();
+const projectId = randomUUID();
+const runId = randomUUID();
 let nextEvidenceNumber = 1;
 
 function isDedicatedTestUrl(value: string | undefined): value is string {
@@ -48,22 +59,44 @@ function createSearchTool(items: readonly { title: string; url: string; snippet:
 
 const context = {
   sessionId: 'postgres-integration-session',
-  researchRunId: 'postgres-integration-run',
+  researchRunId: runId,
   toolInvocationId: 'postgres-integration-tool',
   now: () => new Date('2026-06-01T12:00:00.000Z'),
 };
 
 describeIntegration('SearchTool to PostgreSQL Evidence ingestion integration', () => {
   let database: ReturnType<typeof createDb>;
-  let repository: DrizzleEvidenceStoreRepository;
+  let repository: DrizzleEvidenceAcquisitionRepository;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     database = createDb(testDatabaseUrl);
-    repository = new DrizzleEvidenceStoreRepository(database.db);
+    repository = new DrizzleEvidenceAcquisitionRepository(database.db);
+    await database.db.insert(users).values({
+      id: ownerId,
+      email: `${evidencePrefix}owner@example.test`,
+      name: 'Evidence ingestion integration owner',
+    });
+    await database.db.insert(projects).values({
+      id: projectId,
+      ownerId,
+      name: 'Evidence ingestion integration project',
+    });
+    await database.db.insert(researchRuns).values({
+      id: runId,
+      projectId,
+      goal: 'Test Evidence acquisition ingestion',
+    });
   });
 
   afterAll(async () => {
+    await database.client.unsafe(
+      'delete from evidence_acquisitions where research_run_id = $1',
+      [runId],
+    );
     await database.client.unsafe('delete from evidence_store where id like $1', [`${evidencePrefix}%`]);
+    await database.client.unsafe('delete from research_runs where id = $1', [runId]);
+    await database.client.unsafe('delete from projects where id = $1', [projectId]);
+    await database.client.unsafe('delete from users where id = $1', [ownerId]);
     await database.client.end({ timeout: 5 });
   });
 
@@ -72,24 +105,27 @@ describeIntegration('SearchTool to PostgreSQL Evidence ingestion integration', (
       { title: 'First result', url: 'https://example.test/first', snippet: 'First excerpt' },
       { title: 'Second result', url: 'https://example.test/second', snippet: 'Second excerpt' },
     ];
-    const result = await new SearchResultEvidenceIngestion(repository, {
+    const result = await new SearchResultEvidenceAcquisitionIngestion(repository, {
       idGenerator: new SequenceIds(),
       now: () => new Date('2026-06-01T12:00:00.000Z'),
     }).execute({
       search: createSearchTool(items),
       searchInput: { query: 'integration' },
       searchContext: context,
+      workflowInvocationKey: 'integration-first',
+      stepId: 'market_understanding',
     });
 
     expect(result).toMatchObject({ total: 2, mapped: 2, persisted: 2 });
     for (const item of result.items) {
       if (item.status !== 'persisted') throw new Error('Expected persisted item');
-      await expect(repository.getById(item.evidence.id)).resolves.toEqual(item.evidence);
+      await expect(repository.isAssociatedWithResearchRun(runId, item.evidence.id))
+        .resolves.toBe(true);
     }
   });
 
   it('persists valid items while excluding an invalid mapped item', async () => {
-    const result = await new SearchResultEvidenceIngestion(repository, {
+    const result = await new SearchResultEvidenceAcquisitionIngestion(repository, {
       idGenerator: new SequenceIds(),
       now: () => new Date('2026-06-01T12:00:00.000Z'),
     }).execute({
@@ -99,6 +135,8 @@ describeIntegration('SearchTool to PostgreSQL Evidence ingestion integration', (
       ]),
       searchInput: { query: 'partial mapping' },
       searchContext: context,
+      workflowInvocationKey: 'integration-partial-mapping',
+      stepId: 'pain_point_research',
     });
 
     expect(result).toMatchObject({ total: 2, mapped: 1, persisted: 1 });
@@ -108,7 +146,7 @@ describeIntegration('SearchTool to PostgreSQL Evidence ingestion integration', (
   it('continues after a real duplicate-ID persistence failure', async () => {
     const ids: EvidenceId[] = [`${evidencePrefix}duplicate`, `${evidencePrefix}duplicate`, `${evidencePrefix}after`];
     const idGenerator: EvidenceIdGenerator = { generate: () => ids.shift() ?? `${evidencePrefix}unexpected` };
-    const result = await new SearchResultEvidenceIngestion(repository, {
+    const result = await new SearchResultEvidenceAcquisitionIngestion(repository, {
       idGenerator,
       now: () => new Date('2026-06-01T12:00:00.000Z'),
     }).execute({
@@ -119,6 +157,8 @@ describeIntegration('SearchTool to PostgreSQL Evidence ingestion integration', (
       ]),
       searchInput: { query: 'partial persistence' },
       searchContext: context,
+      workflowInvocationKey: 'integration-partial-persistence',
+      stepId: 'competitor_research',
     });
 
     expect(result).toMatchObject({ total: 3, mapped: 3, persisted: 2 });
@@ -127,11 +167,12 @@ describeIntegration('SearchTool to PostgreSQL Evidence ingestion integration', (
       'persistence_failed',
       'persisted',
     ]);
-    await expect(repository.getById(`${evidencePrefix}after`)).resolves.toBeDefined();
+    await expect(repository.isAssociatedWithResearchRun(runId, `${evidencePrefix}after`))
+      .resolves.toBe(true);
   });
 
   it('persists duplicate URLs as separate Evidence records', async () => {
-    const result = await new SearchResultEvidenceIngestion(repository, {
+    const result = await new SearchResultEvidenceAcquisitionIngestion(repository, {
       idGenerator: new SequenceIds(),
       now: () => new Date('2026-06-01T12:00:00.000Z'),
     }).execute({
@@ -141,6 +182,8 @@ describeIntegration('SearchTool to PostgreSQL Evidence ingestion integration', (
       ]),
       searchInput: { query: 'duplicate URL' },
       searchContext: context,
+      workflowInvocationKey: 'integration-duplicate-url',
+      stepId: 'market_signal_research',
     });
 
     expect(result.persisted).toBe(2);
@@ -150,13 +193,15 @@ describeIntegration('SearchTool to PostgreSQL Evidence ingestion integration', (
   });
 
   it('does not write an empty SearchResult', async () => {
-    const result = await new SearchResultEvidenceIngestion(repository, {
+    const result = await new SearchResultEvidenceAcquisitionIngestion(repository, {
       idGenerator: new SequenceIds(),
       now: () => new Date('2026-06-01T12:00:00.000Z'),
     }).execute({
       search: createSearchTool([]),
       searchInput: { query: 'empty' },
       searchContext: context,
+      workflowInvocationKey: 'integration-empty',
+      stepId: 'market_understanding',
     });
 
     expect(result).toEqual({ query: 'empty', total: 0, mapped: 0, persisted: 0, items: [] });
@@ -169,10 +214,12 @@ describeIntegration('SearchTool to PostgreSQL Evidence ingestion integration', (
       },
     });
 
-    await expect(new SearchResultEvidenceIngestion(repository).execute({
+    await expect(new SearchResultEvidenceAcquisitionIngestion(repository).execute({
       search,
       searchInput: { query: 'failure' },
       searchContext: context,
+      workflowInvocationKey: 'integration-search-failure',
+      stepId: 'market_understanding',
     })).rejects.toBeInstanceOf(SearchToolExecutionError);
   });
 });

@@ -1,8 +1,10 @@
 import { relations, sql } from 'drizzle-orm';
 import type {
   OpportunityScoreBreakdown,
+  OpportunityScoreReasoning,
   ProductEvent,
   ResearchConstraints,
+  ResearchReportSection,
   ValidationPlanDay,
 } from '@product-scout/domain';
 import {
@@ -139,6 +141,25 @@ export const evidenceStore = pgTable('evidence_store', {
   retrievedAt: timestamp('retrieved_at', { withTimezone: true }).notNull(),
 });
 
+export const evidenceAcquisitions = pgTable('evidence_acquisitions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  researchRunId: uuid('research_run_id').notNull()
+    .references(() => researchRuns.id, { onDelete: 'cascade' }),
+  evidenceId: text('evidence_id').notNull()
+    .references(() => evidenceStore.id, { onDelete: 'restrict' }),
+  workflowInvocationKey: text('workflow_invocation_key').notNull(),
+  stepId: researchStepTypeEnum('step_id').notNull(),
+  sourceFingerprint: text('source_fingerprint').notNull(),
+  capturedAt: timestamp('captured_at', { withTimezone: true }).notNull(),
+}, (table) => ({
+  scopeUnique: uniqueIndex('evidence_acquisitions_scope_idx').on(
+    table.researchRunId,
+    table.workflowInvocationKey,
+    table.stepId,
+    table.sourceFingerprint,
+  ),
+}));
+
 export const claims = pgTable('claims', {
   id: text('id').primaryKey(),
   researchRunId: uuid('research_run_id').notNull()
@@ -202,11 +223,26 @@ export const opportunityScores = pgTable('opportunity_scores', {
   opportunityId: uuid('opportunity_id').notNull().references(() => opportunities.id, { onDelete: 'cascade' }),
   total: real('total').notNull(),
   breakdown: jsonb('breakdown').$type<OpportunityScoreBreakdown>().notNull(),
+  reasoning: jsonb('reasoning').$type<OpportunityScoreReasoning>().notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => ({
   opportunityUnique: uniqueIndex('opportunity_scores_opportunity_idx').on(table.opportunityId),
   totalRange: check('opportunity_scores_total_range', sql`${table.total} between 0 and 100`),
+}));
+
+export const researchReports = pgTable('research_reports', {
+  id: uuid('id').primaryKey(),
+  researchRunId: uuid('research_run_id').notNull()
+    .references(() => researchRuns.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  executiveSummary: text('executive_summary').notNull(),
+  sections: jsonb('sections').$type<ResearchReportSection[]>().notNull(),
+  limitations: jsonb('limitations').$type<string[]>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  runUnique: uniqueIndex('research_reports_research_run_idx').on(table.researchRunId),
 }));
 
 export const validationPlans = pgTable('validation_plans', {
@@ -215,7 +251,9 @@ export const validationPlans = pgTable('validation_plans', {
   days: jsonb('days').$type<ValidationPlanDay[]>().notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});
+}, (table) => ({
+  runUnique: uniqueIndex('validation_plans_research_run_idx').on(table.researchRunId),
+}));
 
 export const usersRelations = relations(users, ({ many }) => ({ projects: many(projects) }));
 export const projectsRelations = relations(projects, ({ one, many }) => ({
@@ -224,7 +262,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
 }));
 export const researchRunsRelations = relations(researchRuns, ({ one, many }) => ({
   project: one(projects, { fields: [researchRuns.projectId], references: [projects.id] }),
-  steps: many(researchSteps), evidence: many(evidence), claims: many(claims), findings: many(researchFindings), opportunities: many(opportunities), validationPlans: many(validationPlans), productEvents: many(productEvents),
+  steps: many(researchSteps), evidence: many(evidence), evidenceAcquisitions: many(evidenceAcquisitions), claims: many(claims), findings: many(researchFindings), opportunities: many(opportunities), reports: many(researchReports), validationPlans: many(validationPlans), productEvents: many(productEvents),
 }));
 export const productEventsRelations = relations(productEvents, ({ one }) => ({
   researchRun: one(researchRuns, { fields: [productEvents.researchRunId], references: [researchRuns.id] }),
@@ -239,6 +277,17 @@ export const evidenceRelations = relations(evidence, ({ one }) => ({
 }));
 export const evidenceStoreRelations = relations(evidenceStore, ({ many }) => ({
   claimReferences: many(claimEvidenceRefs),
+  acquisitions: many(evidenceAcquisitions),
+}));
+export const evidenceAcquisitionsRelations = relations(evidenceAcquisitions, ({ one }) => ({
+  researchRun: one(researchRuns, {
+    fields: [evidenceAcquisitions.researchRunId],
+    references: [researchRuns.id],
+  }),
+  evidence: one(evidenceStore, {
+    fields: [evidenceAcquisitions.evidenceId],
+    references: [evidenceStore.id],
+  }),
 }));
 export const claimsRelations = relations(claims, ({ one, many }) => ({
   researchRun: one(researchRuns, { fields: [claims.researchRunId], references: [researchRuns.id] }),
@@ -263,6 +312,12 @@ export const opportunitiesRelations = relations(opportunities, ({ one }) => ({
 }));
 export const opportunityScoresRelations = relations(opportunityScores, ({ one }) => ({
   opportunity: one(opportunities, { fields: [opportunityScores.opportunityId], references: [opportunities.id] }),
+}));
+export const researchReportsRelations = relations(researchReports, ({ one }) => ({
+  researchRun: one(researchRuns, {
+    fields: [researchReports.researchRunId],
+    references: [researchRuns.id],
+  }),
 }));
 export const validationPlansRelations = relations(validationPlans, ({ one }) => ({
   researchRun: one(researchRuns, { fields: [validationPlans.researchRunId], references: [researchRuns.id] }),

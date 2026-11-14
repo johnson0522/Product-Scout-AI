@@ -3,12 +3,14 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { SearchConfigError } from '@product-scout/config';
 import { createSearchTool } from '../src/search';
+import { McpSearchProvider } from '../src/search/McpSearchProvider';
 
 const context = { sessionId: 'session-1', researchRunId: 'run-1', toolInvocationId: 'tool-1' };
 
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('createSearchTool', () => {
@@ -57,5 +59,13 @@ describe('createSearchTool', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ web: { results: [] } }))));
     const tool = createSearchTool({ provider: 'brave', apiKey: 'test-secret', timeoutMs: 1000, maxResponseBytes: 4096 });
     await expect(tool.execute({ query: 'market' }, context)).resolves.toEqual({ query: 'market', items: [] });
+  });
+
+  it('selects MCP through environment config without requiring a search API key', async () => {
+    vi.stubEnv('SEARCH_PROVIDER', 'agent-web-search-mcp');
+    vi.stubEnv('SEARCH_API_KEY', '');
+    const search = vi.spyOn(McpSearchProvider.prototype, 'search').mockResolvedValue({ query: 'market', items: [] });
+    await expect(createSearchTool().execute({ query: 'market' }, context)).resolves.toEqual({ query: 'market', items: [] });
+    expect(search).toHaveBeenCalledWith({ query: 'market' });
   });
 });

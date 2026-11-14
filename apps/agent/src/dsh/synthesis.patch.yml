@@ -1,0 +1,12 @@
+- id: persistent-bash
+  disabled: true
+
+- id: persistent-pwsh
+  disabled: true
+
+- id: mcp-resources
+  disabled: true
+
+- insert:
+    - id: product-scout-submit-synthesis-tool
+      name: './apps/agent/src/dsh/submit-synthesis-tool.mjs'

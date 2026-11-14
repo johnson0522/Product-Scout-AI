@@ -1,0 +1,2 @@
+# JerryLiu369/agent-web-search; isolated infrastructure dependency, not an Agent shell tool.
+agent-web-search-mcp==0.8.1
