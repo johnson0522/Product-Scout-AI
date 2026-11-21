@@ -98,6 +98,9 @@ export class FakeRuntime implements AgentRuntime {
     if (this.options.runError !== undefined) {
       throw this.options.runError;
     }
+    for (const event of state.events) {
+      await input.onEvent?.(event);
+    }
     return {
       sessionId: input.sessionId,
       status: this.options.resultStatus ?? 'completed',

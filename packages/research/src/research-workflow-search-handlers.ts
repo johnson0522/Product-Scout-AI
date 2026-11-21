@@ -20,7 +20,7 @@ import type {
   ResearchWorkflowStepId,
   ResearchWorkflowStepResult,
 } from './research-workflow';
-import { getResearchWorkflowInvocationKey } from './research-workflow';
+import { getResearchWorkflowGoal, getResearchWorkflowInvocationKey } from './research-workflow';
 import type { SearchToolContext, SearchToolInput } from './search';
 
 export interface ResearchWorkflowSearchHandlerOptions {
@@ -29,7 +29,7 @@ export interface ResearchWorkflowSearchHandlerOptions {
   readonly sessionId?: AgentSessionId | ((researchRunId: ResearchRunId) => AgentSessionId);
   readonly toolInvocationId?: (stepId: ResearchWorkflowStepId, attempt: number) => string;
   readonly now?: () => Date;
-  readonly emit?: (event: ToolStartedEvent | ToolCompletedEvent) => void;
+  readonly emit?: (event: ToolStartedEvent | ToolCompletedEvent) => void | Promise<void>;
   readonly limit?: number;
   readonly analysisHandler?: ResearchWorkflowStepHandler;
   readonly reportHandler?: ResearchWorkflowStepHandler;
@@ -125,14 +125,18 @@ export class ResearchWorkflowSearchHandlers implements ResearchWorkflowSearchHan
     const toolInvocationId = this.options.toolInvocationId?.(stepId, input.attempt)
       ?? `${input.workflow.researchRunId}:${stepId}:${input.attempt}`;
     const searchContext: SearchToolContext = {
+      isCancelled: input.isCancelled,
       sessionId,
       researchRunId: input.workflow.researchRunId,
       toolInvocationId,
       ...(this.options.now === undefined ? {} : { now: this.options.now }),
-      ...(this.options.emit === undefined ? {} : { emit: this.options.emit }),
+      emit: async (event) => {
+        await this.options.emit?.(event);
+        await input.emit?.(event);
+      },
     };
     const searchInput: SearchToolInput = {
-      query: this.queryForStep(stepId, input.workflow.goal),
+      query: this.queryForStep(stepId, getResearchWorkflowGoal(input.workflow)),
       ...(this.options.limit === undefined ? {} : { limit: this.options.limit }),
     };
 
@@ -142,7 +146,20 @@ export class ResearchWorkflowSearchHandlers implements ResearchWorkflowSearchHan
       searchContext,
       workflowInvocationKey: getResearchWorkflowInvocationKey(input.workflow),
       stepId,
+      isCancelled: input.isCancelled,
     });
+    for (const item of ingestion.items) {
+      if (item.status !== 'persisted' || input.isCancelled()) continue;
+      await input.emit?.({
+        type: 'evidence.created',
+        eventId: `${toolInvocationId}:evidence:${item.evidence.id}`,
+        sessionId,
+        researchRunId: input.workflow.researchRunId,
+        evidenceId: item.evidence.id,
+        ...(item.item.sourceId === undefined ? {} : { sourceId: item.item.sourceId }),
+        occurredAt: item.evidence.retrievedAt,
+      });
+    }
     return createResult(stepId, ingestion);
   }
 }

@@ -99,6 +99,20 @@ function createHandlers(
 }
 
 describe('ResearchWorkflowSearchHandlers', () => {
+  it('forwards tool and persisted Evidence events through an awaited observer', async () => {
+    const repository = new MemoryEvidenceAcquisitionRepository();
+    const handlers = createHandlers([{ title: 'Original', url: 'https://example.test', snippet: 'Original excerpt' }], repository);
+    const coordinator = new InMemoryResearchWorkflowCoordinator({ definition, handlers: handlers.handlers });
+    const types: string[] = [];
+    await coordinator.run({ researchRunId: 'observed', goal: 'Test' }, {
+      onStepTransition: async () => {},
+      onEvent: async (event) => {
+        if (event.type === 'evidence.created') expect(repository.values.some((item) => item.id === event.evidenceId)).toBe(true);
+        types.push(event.type);
+      },
+    });
+    expect(types).toEqual(Array.from({ length: 4 }).flatMap(() => ['tool.started', 'tool.completed', 'evidence.created']));
+  });
   it('passes ResearchRun context through SearchTool and returns persisted evidence ids', async () => {
     const repository = new MemoryEvidenceAcquisitionRepository();
     const handlers = createHandlers([{

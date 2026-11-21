@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type {
   AgentEvent,
@@ -13,6 +13,7 @@ import type {
 import type {
   ResearchWorkflowCoordinator,
   ResearchWorkflowExecution,
+  ResearchWorkflowObserver,
   ResearchWorkflowStepExecution,
 } from '@product-scout/research';
 
@@ -72,7 +73,8 @@ export class ResearchWorkflowRuntime implements AgentRuntime {
       throw new Error(`Workflow session cannot run from status ${state.status}`);
     }
     state.status = 'running';
-    state.events.push({
+    try {
+      await this.emitEvent(state, input.onEvent, {
       type: 'agent.started',
       eventId: `${input.sessionId}:agent.started`,
       sessionId: input.sessionId,
@@ -80,21 +82,35 @@ export class ResearchWorkflowRuntime implements AgentRuntime {
       occurredAt: this.now(),
     });
 
-    try {
+      const observer: ResearchWorkflowObserver = {
+        onEvent: async (event) => {
+          if (state.status !== 'running') return;
+          await this.emitEvent(state, input.onEvent, { ...event, sessionId: input.sessionId });
+        },
+        onStepTransition: async (step) => {
+          if (state.status !== 'running') return;
+          for (const event of mapStepTransition(input.sessionId, state.input.researchRunId, step, this.now)) {
+            await this.emitEvent(state, input.onEvent, event);
+          }
+        },
+      };
       const execution = await this.runWorkflow({
         researchRunId: state.input.researchRunId,
         goal: state.input.goal,
         ...(state.input.constraints === undefined ? {} : { constraints: state.input.constraints }),
         idempotencyKey: input.sessionId,
-      });
-      state.events.push(...mapWorkflowExecution(input.sessionId, execution, this.now));
+      }, observer);
+      if (isSessionCancelled(state)) return this.result(input.sessionId, state, 'cancelled');
+      for (const event of mapWorkflowExecution(input.sessionId, execution, this.now)) {
+        await this.emitEvent(state, input.onEvent, event);
+      }
       if (execution.status === 'cancelled' || isSessionCancelled(state)) {
         state.status = 'cancelled';
         return this.result(input.sessionId, state, 'cancelled');
       }
       if (execution.status === 'completed') {
         state.status = 'completed';
-        state.events.push({
+        await this.emitEvent(state, input.onEvent, {
           type: 'agent.completed',
           eventId: `${input.sessionId}:agent.completed`,
           sessionId: input.sessionId,
@@ -103,17 +119,23 @@ export class ResearchWorkflowRuntime implements AgentRuntime {
         });
         return this.result(input.sessionId, state, 'completed');
       }
-      return this.fail(input.sessionId, state, execution.failure?.message ?? 'Analysis workflow failed.');
+      return this.fail(
+        input.sessionId,
+        state,
+        execution.failure?.message ?? 'Analysis workflow failed.',
+        input.onEvent,
+      );
     } catch (error: unknown) {
       if (isSessionCancelled(state)) return this.result(input.sessionId, state, 'cancelled');
-      return this.fail(input.sessionId, state, errorMessage(error));
+      return await this.fail(input.sessionId, state, errorMessage(error), input.onEvent);
     }
   }
 
   private async runWorkflow(
     input: Parameters<ResearchWorkflowCoordinator['run']>[0],
+    observer: ResearchWorkflowObserver,
   ): ReturnType<ResearchWorkflowCoordinator['run']> {
-    const execution = this.options.coordinator.run(input);
+    const execution = this.options.coordinator.run(input, observer);
     const timeoutMs = this.options.workflowTimeoutMs;
     if (timeoutMs === undefined) return execution;
 
@@ -165,13 +187,14 @@ export class ResearchWorkflowRuntime implements AgentRuntime {
     return this.trajectory(sessionId, this.requireSession(sessionId));
   }
 
-  private fail(
+  private async fail(
     sessionId: AgentSessionId,
     state: WorkflowSessionState,
     message: string,
-  ): AgentRunResult {
+    onEvent?: AgentRunInput['onEvent'],
+  ): Promise<AgentRunResult> {
     state.status = 'failed';
-    state.events.push({
+    await this.emitEvent(state, onEvent, {
       type: 'agent.failed',
       eventId: `${sessionId}:agent.failed`,
       sessionId,
@@ -181,6 +204,16 @@ export class ResearchWorkflowRuntime implements AgentRuntime {
       recoverable: false,
     });
     return this.result(sessionId, state, 'failed');
+  }
+
+  private async emitEvent(
+    state: WorkflowSessionState,
+    onEvent: AgentRunInput['onEvent'],
+    event: AgentEvent,
+  ): Promise<void> {
+    if (state.events.some((existing) => existing.eventId === event.eventId)) return;
+    state.events.push(event);
+    await onEvent?.(event);
   }
 
   private result(
@@ -222,7 +255,7 @@ function mapStep(
     eventId: `${sessionId}:${step.stepId}:${step.attempt}:started`,
     sessionId,
     researchRunId,
-    stepId: `${researchRunId}:${step.stepId}:${step.attempt}`,
+    stepId: createResearchStepId(researchRunId, step.stepId),
     stepType: step.stepId,
     occurredAt: step.startedAt,
   };
@@ -232,10 +265,13 @@ function mapStep(
     eventId: `${sessionId}:${step.stepId}:${step.attempt}:completed`,
     sessionId,
     researchRunId,
-    stepId: `${researchRunId}:${step.stepId}:${step.attempt}`,
+    stepId: createResearchStepId(researchRunId, step.stepId),
     stepType: step.stepId,
     occurredAt: step.completedAt ?? now(),
     success: step.status === 'completed',
+    status: step.status === 'completed' || step.status === 'cancelled'
+      ? step.status
+      : 'failed',
     ...(step.status === 'completed'
       ? {}
       : { errorMessage: step.failure?.message ?? step.skipReason ?? `Step ended as ${step.status}` }),
@@ -253,6 +289,33 @@ function mapStep(
       }))
     : [];
   return [started, ...opportunityEvents, completed];
+}
+
+function createResearchStepId(researchRunId: string, stepType: string): string {
+  const hex = createHash('sha256')
+    .update(`${researchRunId}\u0000${stepType}`, 'utf8')
+    .digest('hex')
+    .slice(0, 32);
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    `5${hex.slice(13, 16)}`,
+    `${((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16)}${hex.slice(17, 20)}`,
+    hex.slice(20, 32),
+  ].join('-');
+}
+
+function mapStepTransition(
+  sessionId: AgentSessionId,
+  researchRunId: string,
+  step: ResearchWorkflowStepExecution,
+  now: () => Date,
+): readonly AgentEvent[] {
+  if (step.status === 'running') {
+    return mapStep(sessionId, researchRunId, step, now).slice(0, 1);
+  }
+  if (step.attempt === 0) return [];
+  return mapStep(sessionId, researchRunId, step, now).slice(1);
 }
 
 function errorMessage(error: unknown): string {

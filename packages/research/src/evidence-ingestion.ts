@@ -62,6 +62,7 @@ export interface EvidenceIngestionResult {
 export interface EvidenceAcquisitionIngestionInput extends EvidenceIngestionInput {
   readonly workflowInvocationKey: string;
   readonly stepId: ResearchStepType;
+  readonly isCancelled?: () => boolean;
 }
 
 export interface EvidenceAcquisitionIngestionExecutor {
@@ -177,6 +178,7 @@ implements EvidenceAcquisitionIngestionExecutor {
     let persisted = 0;
 
     for (const item of searchResult.items) {
+      if (input.isCancelled?.()) throw new Error('Evidence acquisition cancelled');
       let evidence: Evidence;
       try {
         evidence = this.mapper.map(item);

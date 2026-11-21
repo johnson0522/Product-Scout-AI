@@ -22,6 +22,7 @@ import {
 } from './research-synthesis';
 import {
   getResearchWorkflowInvocationKey,
+  getResearchWorkflowGoal,
   type ResearchWorkflowArtifact,
   type ResearchWorkflowStepDiagnostic,
   type ResearchWorkflowStepId,
@@ -88,7 +89,7 @@ export class ResearchWorkflowAnalysisHandler {
     const plan = validateResearchSynthesisPlan(
       await this.options.planProvider.createPlan({
         researchRunId: input.workflow.researchRunId,
-        goal: input.workflow.goal,
+        goal: getResearchWorkflowGoal(input.workflow),
         invocationKey,
         evidence,
       }),
@@ -99,6 +100,7 @@ export class ResearchWorkflowAnalysisHandler {
     const createdAt = this.now();
     const persistedClaimIdByDraft = new Map<string, ClaimId>();
     for (const draft of plan.claims) {
+      if (input.isCancelled()) return cancelledResult(stepId);
       const claim = await this.options.findingService.ensureClaim({
         id: createSynthesisAggregateId(
           input.workflow.researchRunId,
@@ -118,6 +120,7 @@ export class ResearchWorkflowAnalysisHandler {
     const diagnostics: ResearchWorkflowStepDiagnostic[] = [];
     const opportunityFindings: OpportunityAnalysisFindingInput[] = [];
     for (const draft of plan.findings) {
+      if (input.isCancelled()) return cancelledResult(stepId);
       const claimIds = draft.claimIds.map((draftId) =>
         requireMappedClaimId(persistedClaimIdByDraft, draftId));
       const finding = await this.options.findingService.ensureFinding({
@@ -165,7 +168,7 @@ export class ResearchWorkflowAnalysisHandler {
       this.options.opportunityPlanProvider,
     ).analyze({
       researchRunId: input.workflow.researchRunId,
-      goal: input.workflow.goal,
+      goal: getResearchWorkflowGoal(input.workflow),
       invocationKey,
       findings: opportunityFindings,
     });

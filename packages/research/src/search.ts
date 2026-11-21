@@ -12,6 +12,7 @@ export interface SearchQuery {
 }
 
 export interface SearchResultItem {
+  readonly sourceId?: string;
   readonly title: string;
   readonly url: string;
   readonly snippet: string;
@@ -32,11 +33,12 @@ export interface SearchToolInput {
 }
 
 export interface SearchToolContext {
+  readonly isCancelled?: () => boolean;
   readonly sessionId: AgentSessionId;
   readonly researchRunId: ResearchRunId;
   readonly toolInvocationId: string;
   readonly now?: () => Date;
-  readonly emit?: (event: ToolStartedEvent | ToolCompletedEvent) => void;
+  readonly emit?: (event: ToolStartedEvent | ToolCompletedEvent) => void | Promise<void>;
 }
 
 export class SearchToolInputError extends Error {
@@ -64,7 +66,7 @@ export class SearchTool {
     const query = validateQuery(input);
     const now = context.now ?? (() => new Date());
     const startedAt = now();
-    context.emit?.({
+    await context.emit?.({
       type: 'tool.started',
       eventId: `${context.toolInvocationId}:started`,
       sessionId: context.sessionId,
@@ -75,7 +77,7 @@ export class SearchTool {
 
     try {
       const result = await this.provider.search(query);
-      context.emit?.({
+      await context.emit?.({
         type: 'tool.completed',
         eventId: `${context.toolInvocationId}:completed`,
         sessionId: context.sessionId,
@@ -87,7 +89,7 @@ export class SearchTool {
       return result;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      context.emit?.({
+      await context.emit?.({
         type: 'tool.completed',
         eventId: `${context.toolInvocationId}:completed`,
         sessionId: context.sessionId,

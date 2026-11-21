@@ -1,3 +1,5 @@
+import type { AgentEvent } from '@product-scout/agent-sdk';
+
 import {
   assertResearchWorkflowStepTransition,
   assertResearchWorkflowTransition,
@@ -24,6 +26,7 @@ export interface ResearchWorkflowStepHandlerInput {
   readonly attempt: number;
   readonly completedSteps: ReadonlyMap<ResearchWorkflowStepId, ResearchWorkflowStepResult>;
   readonly isCancelled: () => boolean;
+  readonly emit?: (event: AgentEvent) => Promise<void>;
 }
 
 export type ResearchWorkflowStepHandler = (
@@ -36,8 +39,16 @@ export type ResearchWorkflowStepHandlerRegistry = ReadonlyMap<
 >;
 
 export interface ResearchWorkflowCoordinator {
-  run(input: StartResearchWorkflowInput): Promise<ResearchWorkflowExecution>;
+  run(
+    input: StartResearchWorkflowInput,
+    observer?: ResearchWorkflowObserver,
+  ): Promise<ResearchWorkflowExecution>;
   cancel(researchRunId: string): boolean;
+}
+
+export interface ResearchWorkflowObserver {
+  onStepTransition(execution: ResearchWorkflowStepExecution): Promise<void>;
+  onEvent?(event: AgentEvent): Promise<void>;
 }
 
 export interface InMemoryResearchWorkflowCoordinatorOptions {
@@ -85,7 +96,10 @@ export class InMemoryResearchWorkflowCoordinator implements ResearchWorkflowCoor
 
   private readonly handlers: ResearchWorkflowStepHandlerRegistry;
 
-  public run(input: StartResearchWorkflowInput): Promise<ResearchWorkflowExecution> {
+  public run(
+    input: StartResearchWorkflowInput,
+    observer?: ResearchWorkflowObserver,
+  ): Promise<ResearchWorkflowExecution> {
     const normalizedInput = validateStartResearchWorkflowInput(input);
     const invocationKey = getResearchWorkflowInvocationKey(normalizedInput);
     const existing = this.invocations.get(invocationKey);
@@ -97,7 +111,7 @@ export class InMemoryResearchWorkflowCoordinator implements ResearchWorkflowCoor
     }
 
     const cancellation: CancellationState = { cancelled: false };
-    const promise = this.execute(normalizedInput, cancellation);
+    const promise = this.execute(normalizedInput, cancellation, observer);
     this.invocations.set(invocationKey, { input: normalizedInput, promise, cancellation });
     return promise;
   }
@@ -115,6 +129,7 @@ export class InMemoryResearchWorkflowCoordinator implements ResearchWorkflowCoor
   private async execute(
     input: StartResearchWorkflowInput,
     cancellation: CancellationState,
+    observer?: ResearchWorkflowObserver,
   ): Promise<ResearchWorkflowExecution> {
     const startedAt = this.now();
     let workflowStatus: ResearchWorkflowStatus = 'pending';
@@ -159,6 +174,7 @@ export class InMemoryResearchWorkflowCoordinator implements ResearchWorkflowCoor
       const attempt = current.attempt + 1;
       const running = transitionStep({ ...current, attempt }, 'running', this.now());
       executions.set(stepId, running);
+      await observer?.onStepTransition(running);
       const handler = this.handlers.get(stepId);
       if (handler === undefined) {
         throw new ResearchWorkflowHandlerMissingError(stepId);
@@ -172,16 +188,21 @@ export class InMemoryResearchWorkflowCoordinator implements ResearchWorkflowCoor
           attempt,
           completedSteps: new Map(results),
           isCancelled: () => cancellation.cancelled,
+          ...(observer?.onEvent === undefined ? {} : { emit: observer.onEvent }),
         });
       } catch (error: unknown) {
         if (cancellation.cancelled) {
-          executions.set(stepId, transitionStep(running, 'cancelled', this.now()));
+          const cancelled = transitionStep(running, 'cancelled', this.now());
+          executions.set(stepId, cancelled);
+          await observer?.onStepTransition(cancelled);
           this.cancelPending(executions);
           workflowStatus = transitionWorkflow(workflowStatus, 'cancelled');
           break;
         }
         const failure = executionFailure(error);
-        executions.set(stepId, finishStep(running, 'failed', this.now(), failure));
+        const failed = finishStep(running, 'failed', this.now(), failure);
+        executions.set(stepId, failed);
+        await observer?.onStepTransition(failed);
         workflowFailure = failure;
         this.skipPending(executions, `Workflow stopped after step ${stepId} failed.`);
         workflowStatus = transitionWorkflow(workflowStatus, 'failed');
@@ -189,7 +210,9 @@ export class InMemoryResearchWorkflowCoordinator implements ResearchWorkflowCoor
       }
 
       if (cancellation.cancelled) {
-        executions.set(stepId, transitionStep(running, 'cancelled', this.now()));
+        const cancelled = transitionStep(running, 'cancelled', this.now());
+        executions.set(stepId, cancelled);
+        await observer?.onStepTransition(cancelled);
         this.cancelPending(executions);
         workflowStatus = transitionWorkflow(workflowStatus, 'cancelled');
         break;
@@ -199,7 +222,9 @@ export class InMemoryResearchWorkflowCoordinator implements ResearchWorkflowCoor
         const failure = executionFailure(
           new Error(`Handler returned result for ${result.stepId}, expected ${stepId}`),
         );
-        executions.set(stepId, finishStep(running, 'failed', this.now(), failure));
+        const failed = finishStep(running, 'failed', this.now(), failure);
+        executions.set(stepId, failed);
+        await observer?.onStepTransition(failed);
         workflowFailure = failure;
         this.skipPending(executions, `Workflow stopped after step ${stepId} returned an invalid result.`);
         workflowStatus = transitionWorkflow(workflowStatus, 'failed');
@@ -207,10 +232,12 @@ export class InMemoryResearchWorkflowCoordinator implements ResearchWorkflowCoor
       }
 
       if (result.status === 'completed') {
-        executions.set(stepId, {
+        const completed = {
           ...transitionStep(running, 'completed', this.now()),
           result,
-        });
+        } as const;
+        executions.set(stepId, completed);
+        await observer?.onStepTransition(completed);
         results.set(stepId, result);
         continue;
       }
@@ -221,25 +248,31 @@ export class InMemoryResearchWorkflowCoordinator implements ResearchWorkflowCoor
             stepId,
             `Step ${stepId} returned skipped but skipping is not allowed.`,
           );
-          executions.set(stepId, finishStep(running, 'failed', this.now(), failure));
+          const failed = finishStep(running, 'failed', this.now(), failure);
+          executions.set(stepId, failed);
+          await observer?.onStepTransition(failed);
           workflowFailure = failure;
           this.skipPending(executions, `Workflow stopped after step ${stepId} was not allowed to skip.`);
           workflowStatus = transitionWorkflow(workflowStatus, 'failed');
           break;
         }
-        executions.set(stepId, {
+        const skipped = {
           ...transitionStep(running, 'skipped', this.now()),
           skipReason: result.reason,
           result,
-        });
+        } as const;
+        executions.set(stepId, skipped);
+        await observer?.onStepTransition(skipped);
         results.set(stepId, result);
         continue;
       }
 
-      executions.set(stepId, {
+      const failed = {
         ...finishStep(running, 'failed', this.now(), result.failure),
         result,
-      });
+      } as const;
+      executions.set(stepId, failed);
+      await observer?.onStepTransition(failed);
       workflowFailure = result.failure;
       this.skipPending(executions, `Workflow stopped after step ${stepId} failed.`);
       workflowStatus = transitionWorkflow(workflowStatus, 'failed');

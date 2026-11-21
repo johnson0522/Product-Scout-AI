@@ -10,6 +10,7 @@ import { createResearchPostHandler } from '../app/api/research/handler';
 class GatewayStub implements AgentGateway {
   public readonly inputs: CreateResearchInput[] = [];
   public readonly started: string[] = [];
+  public startGate?: Promise<void>;
 
   public async createResearch(input: CreateResearchInput): Promise<ResearchRun> {
     this.inputs.push(input);
@@ -28,6 +29,7 @@ class GatewayStub implements AgentGateway {
 
   public async startResearch(runId: string): Promise<void> {
     this.started.push(runId);
+    await this.startGate;
   }
 
   public async cancelResearch(_runId: string): Promise<void> {}
@@ -63,5 +65,33 @@ describe('POST /api/research', () => {
     );
 
     expect(response.status).toBe(400);
+  });
+
+  it('does not expose database or provider exception messages', async () => {
+    const response = await createResearchPostHandler(() => {
+      throw new Error('postgres://private:credential@database');
+    })(new Request('http://localhost/api/research', {
+      method: 'POST', body: JSON.stringify({ projectId: 'project-1', goal: 'Research' }),
+    }));
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: 'Service unavailable' });
+  });
+
+  it('returns the run id without waiting for background execution', async () => {
+    let release: (() => void) | undefined;
+    const gateway = new GatewayStub();
+    gateway.startGate = new Promise<void>((resolve) => { release = resolve; });
+
+    const response = await createResearchPostHandler(() => gateway)(
+      new Request('http://localhost/api/research', {
+        method: 'POST',
+        body: JSON.stringify({ projectId: 'project-1', goal: 'Run in background' }),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ researchRunId: 'run-1' });
+    expect(gateway.started).toEqual(['run-1']);
+    release?.();
   });
 });

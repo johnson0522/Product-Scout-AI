@@ -18,6 +18,8 @@ import {
   type ResearchEventPublisher,
   type ProductEventStore,
   type ResearchRunStore,
+  type ResearchStepProgressInput,
+  type ResearchStepProgressStore,
   assertResearchTransition,
   InvalidResearchTransitionError,
 } from '../src';
@@ -115,6 +117,13 @@ class MemoryProductEventStore implements ProductEventStore {
   }
 }
 
+class MemoryStepStore implements ResearchStepProgressStore {
+  public readonly records: ResearchStepProgressInput[] = [];
+  public async record(input: ResearchStepProgressInput): Promise<void> {
+    this.records.push(input);
+  }
+}
+
 const baseEvent = {
   eventId: 'event-1',
   sessionId: 'fake-session-1',
@@ -165,6 +174,51 @@ describe('research state transitions', () => {
 });
 
 describe('DefaultAgentGateway', () => {
+  it('does not let cancellation overwrite a completion already committing', async () => {
+    const { gateway, runs, publisher } = createGateway({ events: successfulEvents() });
+    const run = await gateway.createResearch({ projectId: 'p', goal: 'Race' });
+    let release: () => void = () => {};
+    const commitGate = new Promise<void>((resolve) => { release = resolve; });
+    let committing = false;
+    const update = runs.update.bind(runs);
+    vi.spyOn(runs, 'update').mockImplementation(async (id, input) => {
+      if (input.status === 'completed') { committing = true; await commitGate; }
+      return update(id, input);
+    });
+    const execution = gateway.startResearch(run.id);
+    await vi.waitFor(() => expect(committing).toBe(true));
+    const cancellation = gateway.cancelResearch(run.id);
+    const rejected = expect(cancellation).rejects.toBeInstanceOf(InvalidResearchTransitionError);
+    release();
+    await execution;
+    await rejected;
+    expect((await runs.findById(run.id))?.status).toBe('completed');
+    expect(publisher.events.filter((event) => event.type === 'research.cancelled')).toHaveLength(0);
+  });
+  it('commits terminal run status before notifying terminal event subscribers', async () => {
+    const runs = new MemoryRunStore();
+    const observed: string[] = [];
+    const gateway = new DefaultAgentGateway(runs, new FakeRuntimeFactory({ events: successfulEvents() }), {
+      eventPublisher: { publish: async (event) => {
+        if (event.type === 'research.completed') observed.push((await runs.findById(event.researchRunId))?.status ?? 'missing');
+      } },
+    });
+    const run = await gateway.createResearch({ projectId: 'p', goal: 'ordering' });
+    await gateway.startResearch(run.id);
+    expect(observed).toEqual(['completed']);
+  });
+
+  it('suppresses late completion after a run is cancelled', async () => {
+    let release: (() => void) | undefined;
+    const runGate = new Promise<void>((resolve) => { release = resolve; });
+    const { gateway, factory, publisher } = createGateway({ events: successfulEvents(), runGate });
+    const run = await gateway.createResearch({ projectId: 'p', goal: 'cancel' });
+    const execution = gateway.startResearch(run.id);
+    await vi.waitFor(() => expect(factory.createdRuntimes[0]?.calls.run).toHaveLength(1));
+    await gateway.cancelResearch(run.id);
+    release?.(); await execution;
+    expect(publisher.events.map((event) => event.type)).toEqual(['research.cancelled']);
+  });
   it('creates a run with no runtime binding', async () => {
     const { gateway } = createGateway();
     const run = await gateway.createResearch({ projectId: 'project-1', goal: 'Initial state' });
@@ -206,6 +260,46 @@ describe('DefaultAgentGateway', () => {
       'research.started',
       'research.completed',
     ]);
+  });
+
+  it('publishes runtime events incrementally once and persists step progress', async () => {
+    const runs = new MemoryRunStore();
+    const stepStore = new MemoryStepStore();
+    const publisher = new CollectingPublisher();
+    const events: readonly AgentEvent[] = [
+      { ...baseEvent, type: 'agent.started', researchRunId: 'run-1' },
+      {
+        ...baseEvent,
+        eventId: 'step-start',
+        type: 'research.step.started',
+        researchRunId: 'run-1',
+        stepId: '10000000-0000-5000-8000-000000000001',
+        stepType: 'market_understanding',
+      },
+      {
+        ...baseEvent,
+        eventId: 'step-complete',
+        type: 'research.step.completed',
+        researchRunId: 'run-1',
+        stepId: '10000000-0000-5000-8000-000000000001',
+        stepType: 'market_understanding',
+        success: true,
+        status: 'completed',
+      },
+      { ...baseEvent, eventId: 'event-2', type: 'agent.completed', researchRunId: 'run-1' },
+    ];
+    const gateway = new DefaultAgentGateway(runs, new FakeRuntimeFactory({ events }), {
+      eventPublisher: publisher,
+      stepStore,
+    });
+    const run = await gateway.createResearch({ projectId: 'project-1', goal: 'Progress' });
+
+    await gateway.startResearch(run.id);
+
+    expect(publisher.events.map((event) => event.eventId)).toEqual([
+      'event-1', 'step-start', 'step-complete', 'event-2',
+    ]);
+    expect(stepStore.records.map((record) => record.status)).toEqual(['running', 'completed']);
   });
 
   it('records a runtime failure and exposes a product failure event', async () => {

@@ -165,7 +165,60 @@ Copy:
 ```Bash
 cp .env.example .env
 ```
-Required environment variables will be documented as the implementation progresses.
+Configure `DATABASE_URL`, `PRODUCT_SCOUT_OWNER_ID`, `DSH_HOME`,
+`DEEPSEEK_API_KEY`, and the selected Search provider before starting research.
+The generic `LLM_API_KEY` setting is not forwarded to the isolated DSH runtime.
+
+### Local workspace startup
+
+V0.1 runs as a **local, single-owner evaluation workspace**, without login.
+Do not expose it through a public reverse proxy or override its loopback bind.
+Project and run access is scoped to the server-configured owner, not an ID
+supplied by the browser. Authentication for remote/multi-user hosting requires
+a separate design decision.
+
+After initializing your development database as described above:
+
+1. Generate a UUID with `node -e "console.log(require('node:crypto').randomUUID())"`.
+2. Set `PRODUCT_SCOUT_OWNER_ID` to that value in the root `.env`.
+3. Run `pnpm db:seed-owner` once. This explicit operator command inserts only
+   the configured owner and never runs automatically during application startup.
+4. Set the DSH and Search settings documented below, then run
+   `pnpm --filter @product-scout/web dev` and open `http://127.0.0.1:3000/projects`.
+
+The Web dev/start scripts load the root `.env` using Node's `--env-file`
+(Node 20.6+). Existing shell variables take precedence. Production-mode local
+evaluation uses `pnpm build` followed by `pnpm --filter @product-scout/web start`.
+The UI supports project creation, research history, six-step progress, cancellation,
+reports, explained scores, MVPs, seven-day plans, and Finding/Claim/Evidence links.
+Execution is process-local: keep the server running; restarts do not resume work.
+
+Search results are fetched through a bounded public-HTTPS adapter and Source
+metadata is stored through a Repository. Private/reserved destinations, redirects,
+credentials, and alternative ports are rejected. A failed page fetch retains the
+original search excerpt with an explicit failed tool event. This is not a full
+web archive and does not render JavaScript or parse PDFs.
+
+### Validation
+
+```powershell
+$env:CI='true'
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+# Requires a Playwright Chromium installation; Edge can be selected on Windows.
+$env:PLAYWRIGHT_CHANNEL='msedge'
+pnpm test:e2e
+git diff --check
+```
+
+Browser contract tests use HTTP fixtures. Dedicated PostgreSQL tests execute
+real migrations and real repositories; see [the database test guide](docs/postgres-integration.md).
+Neither test category claims live-model research quality. Current acceptance,
+endpoint contracts, exact test counts and outstanding environment requirements
+are recorded in [V0.1 acceptance](docs/v0.1-acceptance.md).
 
 ### Real web search (E1)
 
@@ -244,6 +297,13 @@ The fixed workflow requires four Search calls. `AGENT_MAX_SEARCHES` and
 composition time. `AGENT_TIMEOUT_MS` bounds the complete workflow and each
 individual DSH reasoning operation.
 
+Production collects at most five results per research step (twenty overall),
+further reduced by `AGENT_MAX_SOURCES`. This leaves room for bounded page
+excerpts in the existing 200,000-character synthesis envelope. The documented
+100-source limit is a safety ceiling, not a collection target. Oversized provider
+excerpts or complete prompts still fail explicitly rather than being silently
+rewritten into unsupported Evidence.
+
 Run a live smoke check from the repository root (requires Node 20.6+ and a root
 `.env` file; this makes one real search request and may use provider quota):
 
@@ -270,7 +330,9 @@ events omit secrets and upstream response bodies.
 
 The production Gateway now connects Search and evidence ingestion to the full
 Finding, Opportunity, Report, and ValidationPlan workflow. Incremental event
-publication during execution and durable ResearchStep state remain later work.
+publication persists agent and step lifecycle events during execution, and
+ResearchStep business state is stored in PostgreSQL. Execution remains
+process-local and does not recover automatically after a server restart.
 
 ## Architecture Documents
 - docs/architecture.md
@@ -289,3 +351,5 @@ publication during execution and durable ResearchStep state remain later work.
 - docs/decisions/008-evidence-backed-research-report.md
 - docs/decisions/009-seven-day-validation-plan.md
 - docs/decisions/010-production-research-workflow-activation.md
+- docs/decisions/011-incremental-progress-and-step-persistence.md
+- docs/decisions/012-local-product-workspace-and-fetch.md

@@ -277,6 +277,13 @@ export function getResearchWorkflowStepReadiness(
  * Identifies duplicate start requests within the application contract. Durable
  * cross-process enforcement still requires a persistent coordinator.
  */
+/** Carry caller constraints into Search and reasoning without changing the
+ * persisted goal or interpreting source content as execution instructions. */
+export function getResearchWorkflowGoal(input: StartResearchWorkflowInput): string {
+  if (input.constraints === undefined || Object.keys(input.constraints).length === 0) return input.goal;
+  return `${input.goal}\nResearch constraints: ${JSON.stringify(input.constraints)}`;
+}
+
 export function getResearchWorkflowInvocationKey(
   input: StartResearchWorkflowInput,
 ): string {

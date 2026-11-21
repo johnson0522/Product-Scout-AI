@@ -6,6 +6,7 @@ import type {
   ResearchConstraints,
   ResearchRun,
   ResearchReport,
+  ResearchStep,
   Source,
   ValidationPlan,
 } from '@product-scout/domain';
@@ -46,6 +47,23 @@ export interface ResearchRunRepository {
     agentSessionId: string,
     runtimeMetadata: Readonly<Record<string, string>>,
   ): Promise<ResearchRun>;
+}
+
+export interface ResearchStepProgressInput {
+  readonly id: ResearchStep['id'];
+  readonly researchRunId: ResearchStep['researchRunId'];
+  readonly type: ResearchStep['type'];
+  readonly status: Extract<ResearchStep['status'], 'running' | 'completed' | 'failed' | 'cancelled'>;
+  readonly occurredAt: Date;
+  readonly errorMessage?: string;
+}
+
+export interface ResearchStepRepository {
+  findById(id: ResearchStep['id']): Promise<ResearchStep | null>;
+  listByResearchRunId(
+    researchRunId: ResearchStep['researchRunId'],
+  ): Promise<readonly ResearchStep[]>;
+  record(input: ResearchStepProgressInput): Promise<void>;
 }
 
 export interface ProductEventRepository {

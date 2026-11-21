@@ -61,6 +61,8 @@ export interface AgentSession {
 
 export interface AgentRunInput {
   readonly sessionId: AgentSessionId;
+  /** Optional durable delivery boundary; runtimes await it before progressing. */
+  readonly onEvent?: (event: AgentEvent) => Promise<void>;
 }
 
 export interface AgentRunResult {
@@ -110,7 +112,8 @@ export interface EvidenceCreatedEvent extends AgentEventBase {
   readonly type: 'evidence.created';
   readonly researchRunId: ResearchRunId;
   readonly evidenceId: EvidenceId;
-  readonly sourceId: SourceId;
+  /** Legacy sources table identity; C2 Evidence embeds its source URL instead. */
+  readonly sourceId?: SourceId;
 }
 
 export interface ResearchStepCompletedEvent extends AgentEventBase {
@@ -119,6 +122,7 @@ export interface ResearchStepCompletedEvent extends AgentEventBase {
   readonly stepId: ResearchStepId;
   readonly stepType: ResearchStepType;
   readonly success: boolean;
+  readonly status?: 'completed' | 'failed' | 'cancelled';
   readonly errorMessage?: string;
 }
 

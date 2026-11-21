@@ -1,5 +1,8 @@
 import type {
   ProjectId,
+  ResearchStepId,
+  ResearchStepStatus,
+  ResearchStepType,
   ResearchConstraints,
   ResearchRun,
   ResearchRunId,
@@ -22,7 +25,7 @@ import {
   type ResearchEventPublisher,
   toResearchEvent,
 } from './research-events';
-import { assertResearchTransition } from './research-state';
+import { assertResearchTransition, InvalidResearchTransitionError } from './research-state';
 
 export interface CreateResearchInput {
   readonly projectId: ProjectId;
@@ -53,6 +56,20 @@ export interface ResearchRunStore {
   ): Promise<ResearchRun>;
 }
 
+export interface ResearchStepProgressInput {
+  readonly id: ResearchStepId;
+  readonly researchRunId: ResearchRunId;
+  readonly type: ResearchStepType;
+  readonly status: Extract<ResearchStepStatus, 'running' | 'completed' | 'failed' | 'cancelled'>;
+  readonly occurredAt: Date;
+  readonly errorMessage?: string;
+}
+
+/** Business-level step persistence port; it does not store runtime trajectory. */
+export interface ResearchStepProgressStore {
+  record(input: ResearchStepProgressInput): Promise<void>;
+}
+
 export interface AgentGateway {
   createResearch(input: CreateResearchInput): Promise<ResearchRun>;
   startResearch(runId: ResearchRunId): Promise<void>;
@@ -80,6 +97,7 @@ export class AgentGatewayRuntimeError extends Error {
 interface ActiveExecution {
   readonly runtime: AgentRuntime;
   readonly sessionId: AgentSessionId;
+  readonly steps: Map<ResearchStepId, ResearchStepProgressInput>;
 }
 
 export interface DefaultAgentGatewayOptions {
@@ -87,12 +105,17 @@ export interface DefaultAgentGatewayOptions {
   readonly eventStore?: ProductEventStore;
   readonly liveEventPublisher?: LiveEventPublisher;
   readonly now?: () => Date;
+  readonly stepStore?: ResearchStepProgressStore;
 }
 
 export class DefaultAgentGateway implements AgentGateway {
+  private readonly startingRuns = new Set<ResearchRunId>();
+  private readonly cancellingRuns = new Set<ResearchRunId>();
+  private readonly stateWrites = new Map<ResearchRunId, Promise<void>>();
   private readonly activeExecutions = new Map<ResearchRunId, ActiveExecution>();
   private readonly eventPublisher: ResearchEventPublisher;
   private readonly now: () => Date;
+  private readonly stepStore: ResearchStepProgressStore | undefined;
 
   public constructor(
     private readonly runs: ResearchRunStore,
@@ -103,6 +126,7 @@ export class DefaultAgentGateway implements AgentGateway {
       ? options.eventPublisher ?? new NoopResearchEventPublisher()
       : new ProductEventStorePublisher(options.eventStore, options.liveEventPublisher);
     this.now = options.now ?? (() => new Date());
+    this.stepStore = options.stepStore;
   }
 
   public async createResearch(input: CreateResearchInput): Promise<ResearchRun> {
@@ -110,6 +134,16 @@ export class DefaultAgentGateway implements AgentGateway {
   }
 
   public async startResearch(runId: ResearchRunId): Promise<void> {
+    if (this.startingRuns.has(runId)) throw new Error('Research run is already starting');
+    this.startingRuns.add(runId);
+    try {
+      await this.executeResearch(runId);
+    } finally {
+      this.startingRuns.delete(runId);
+    }
+  }
+
+  private async executeResearch(runId: ResearchRunId): Promise<void> {
     const run = await this.requireRun(runId);
     assertResearchTransition(run.status, 'running');
 
@@ -121,25 +155,53 @@ export class DefaultAgentGateway implements AgentGateway {
         goal: run.goal,
         ...(run.constraints === undefined ? {} : { constraints: run.constraints }),
       });
+      if ((await this.requireRun(runId)).status === 'cancelled') {
+        await runtime.cancel(session.id);
+        return;
+      }
 
       await this.runs.bindAgentSession(
         runId,
         session.id,
         this.runtimeFactory.metadata,
       );
-      await this.updateOrThrow(runId, {
-        status: 'running',
+      await this.transition(runId, run.status, 'running', {
         startedAt: this.now(),
       });
-      this.activeExecutions.set(runId, { runtime, sessionId: session.id });
+      this.activeExecutions.set(runId, { runtime, sessionId: session.id, steps: new Map() });
+      if ((await this.requireRun(runId)).status === 'cancelled') {
+        await runtime.cancel(session.id);
+        return;
+      }
 
-      const result = await runtime.run({ sessionId: session.id });
+      const deliveredEventIds = new Set<string>();
+      let terminalEvent: AgentEvent | undefined;
+      const publishRuntimeEvent = async (event: AgentEvent): Promise<void> => {
+        if (deliveredEventIds.has(event.eventId)) return;
+        if ('researchRunId' in event && event.researchRunId !== runId) {
+          throw new Error('Runtime event belongs to a different ResearchRun');
+        }
+        if (event.type === 'agent.completed' || event.type === 'agent.failed') {
+          terminalEvent = event;
+          return;
+        }
+        await this.withStateWrite(runId, async () => {
+          if (this.cancellingRuns.has(runId) || deliveredEventIds.has(event.eventId) || (await this.requireRun(runId)).status !== 'running') return;
+          await this.recordStepProgress(event);
+          await this.eventPublisher.publish(toResearchEvent(runId, event));
+          deliveredEventIds.add(event.eventId);
+        });
+      };
+      const result = await runtime.run({
+        sessionId: session.id,
+        onEvent: publishRuntimeEvent,
+      });
       for (const event of result.trajectory.events) {
-        await this.eventPublisher.publish(toResearchEvent(runId, event));
+        await publishRuntimeEvent(event);
       }
 
       const current = await this.requireRun(runId);
-      if (current.status === 'cancelled') {
+      if (current.status === 'cancelled' || this.cancellingRuns.has(runId)) {
         return;
       }
 
@@ -147,12 +209,22 @@ export class DefaultAgentGateway implements AgentGateway {
         await this.transition(runId, current.status, 'completed', {
           completedAt: this.now(),
         });
+        await this.eventPublisher.publish(toResearchEvent(runId,
+          terminalEvent?.type === 'agent.completed' ? terminalEvent : {
+            type: 'agent.completed', eventId: `${session.id}:gateway-completed`,
+            sessionId: session.id, researchRunId: runId, occurredAt: this.now(),
+          }));
         return;
       }
 
       if (result.status === 'cancelled') {
         await this.transition(runId, current.status, 'cancelled', {
           completedAt: this.now(),
+        });
+        await this.closeActiveSteps(runId, 'cancelled');
+        await this.eventPublisher.publish({
+          type: 'research.cancelled', eventId: `${session.id}:gateway-cancelled`,
+          researchRunId: runId, occurredAt: this.now(),
         });
         return;
       }
@@ -163,7 +235,16 @@ export class DefaultAgentGateway implements AgentGateway {
         completedAt: this.now(),
         errorMessage: message,
       });
+      await this.closeActiveSteps(runId, 'failed', message);
+      await this.eventPublisher.publish(toResearchEvent(runId,
+        terminalEvent?.type === 'agent.failed' ? terminalEvent : {
+          type: 'agent.failed', eventId: `${session.id}:gateway-failed`,
+          sessionId: session.id, researchRunId: runId, occurredAt: this.now(),
+          errorMessage: message, recoverable: false,
+        }));
     } catch (error: unknown) {
+      if (this.cancellingRuns.has(runId)) return;
+      if ((await this.runs.findById(runId))?.status === 'cancelled') return;
       const message = errorMessage(error);
       try {
         await this.recordFailure(runId, message);
@@ -178,14 +259,54 @@ export class DefaultAgentGateway implements AgentGateway {
         cause: error,
       });
     } finally {
-      this.activeExecutions.delete(runId);
+      if (!this.cancellingRuns.has(runId)) this.activeExecutions.delete(runId);
     }
+  }
+
+  private async recordStepProgress(event: AgentEvent): Promise<void> {
+    if (event.type === 'research.step.started') {
+      const progress: ResearchStepProgressInput = {
+        id: event.stepId,
+        researchRunId: event.researchRunId,
+        type: event.stepType,
+        status: 'running',
+        occurredAt: event.occurredAt,
+      };
+      await this.stepStore?.record(progress);
+      this.activeExecutions.get(event.researchRunId)?.steps.set(event.stepId, progress);
+      return;
+    }
+    if (event.type === 'research.step.completed') {
+      await this.stepStore?.record({
+        id: event.stepId,
+        researchRunId: event.researchRunId,
+        type: event.stepType,
+        status: event.success ? 'completed' : event.status ?? 'failed',
+        occurredAt: event.occurredAt,
+        ...(event.errorMessage === undefined ? {} : { errorMessage: event.errorMessage }),
+      });
+      this.activeExecutions.get(event.researchRunId)?.steps.delete(event.stepId);
+    }
+  }
+
+  private async closeActiveSteps(
+    runId: ResearchRunId,
+    status: 'failed' | 'cancelled',
+    errorMessage?: string,
+  ): Promise<void> {
+    const steps = this.activeExecutions.get(runId)?.steps;
+    for (const step of steps?.values() ?? []) {
+      await this.stepStore?.record({ ...step, status, occurredAt: this.now(), errorMessage });
+    }
+    steps?.clear();
   }
 
   public async cancelResearch(runId: ResearchRunId): Promise<void> {
     const run = await this.requireRun(runId);
     assertResearchTransition(run.status, 'cancelled');
     const execution = this.activeExecutions.get(runId);
+    if (this.cancellingRuns.has(runId)) throw new Error('Research cancellation is already in progress');
+    this.cancellingRuns.add(runId);
 
     try {
       if (execution !== undefined) {
@@ -194,6 +315,7 @@ export class DefaultAgentGateway implements AgentGateway {
       await this.transition(runId, run.status, 'cancelled', {
         completedAt: this.now(),
       });
+      await this.closeActiveSteps(runId, 'cancelled');
       await this.eventPublisher.publish({
         type: 'research.cancelled',
         eventId: `gateway-cancel:${runId}:${this.now().toISOString()}`,
@@ -201,6 +323,7 @@ export class DefaultAgentGateway implements AgentGateway {
         occurredAt: this.now(),
       });
     } catch (error: unknown) {
+      if (error instanceof InvalidResearchTransitionError) throw error;
       const message = errorMessage(error);
       try {
         await this.recordFailure(runId, message);
@@ -215,6 +338,7 @@ export class DefaultAgentGateway implements AgentGateway {
         cause: error,
       });
     } finally {
+      this.cancellingRuns.delete(runId);
       this.activeExecutions.delete(runId);
     }
   }
@@ -226,7 +350,26 @@ export class DefaultAgentGateway implements AgentGateway {
     update: Omit<ResearchRunUpdateData, 'status'> = {},
   ): Promise<ResearchRun> {
     assertResearchTransition(from, to);
-    return this.updateOrThrow(runId, { ...update, status: to });
+    return this.withStateWrite(runId, async () => {
+      // Re-read under the process-local write lock: an earlier await may have
+      // allowed cancel or completion to commit since the caller read `from`.
+      const current = await this.requireRun(runId);
+      assertResearchTransition(current.status, to);
+      return this.updateOrThrow(runId, { ...update, status: to });
+    });
+  }
+
+  private async withStateWrite<T>(runId: ResearchRunId, action: () => Promise<T>): Promise<T> {
+    const previous = this.stateWrites.get(runId) ?? Promise.resolve();
+    let release: () => void = () => {};
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    this.stateWrites.set(runId, pending);
+    await previous;
+    try { return await action(); }
+    finally {
+      release();
+      if (this.stateWrites.get(runId) === pending) this.stateWrites.delete(runId);
+    }
   }
 
   private async recordFailure(runId: ResearchRunId, message: string): Promise<void> {
@@ -239,6 +382,7 @@ export class DefaultAgentGateway implements AgentGateway {
       completedAt: this.now(),
       errorMessage: message,
     });
+    await this.closeActiveSteps(runId, 'failed', message);
     const event: ResearchEvent = {
       type: 'research.failed',
       eventId: `gateway-failure:${runId}:${this.now().toISOString()}`,

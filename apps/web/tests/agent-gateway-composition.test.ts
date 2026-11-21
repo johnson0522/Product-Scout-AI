@@ -43,7 +43,7 @@ describe('production Agent Gateway composition', () => {
 
     expect(result).toBe(expected);
     expect(capturedDependencies).toMatchObject({
-      searchLimit: 25,
+      searchLimit: 5,
       workflowTimeoutMs: 300_000,
     });
     expect(capturedDependencies?.evidenceRepository.constructor.name)
@@ -80,5 +80,7 @@ describe('production Agent Gateway composition', () => {
       .toThrow('AGENT_MAX_SEARCHES must be at least 4');
     expect(() => create({ DSH_HOME: '.dsh', AGENT_TIMEOUT_MS: 'not-a-number' }))
       .toThrow('AGENT_TIMEOUT_MS must be a positive integer');
+    expect(() => create({ DSH_HOME: '.dsh', AGENT_MAX_SEARCHES: '31' }))
+      .toThrow('V0.1 budgets cannot exceed');
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ProductEvent, ResearchRun } from '@product-scout/domain';
 import type { AgentEvent } from '@product-scout/agent-sdk';
 import { FakeRuntimeFactory } from '@product-scout/agent-sdk/testing';
@@ -115,13 +115,13 @@ describe('research gateway integration', () => {
     );
 
     expect(response.status).toBe(201);
-    expect((await store.findById('run-1'))?.status).toBe('completed');
+    await vi.waitFor(async () => {
+      expect((await store.findById('run-1'))?.status).toBe('completed');
+    });
     expect((await eventStore.listByResearchRunId('run-1')).map((event) => event.type)).toEqual([
       'research.started',
       'research.completed',
     ]);
-    expect(factory.createdRuntimes[0]?.calls.run).toEqual([
-      { sessionId: 'session-1' },
-    ]);
+    expect(factory.createdRuntimes[0]?.calls.run[0]).toMatchObject({ sessionId: 'session-1' });
   });
 });

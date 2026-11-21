@@ -3,17 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node --env-file=../../.env node_modules/next/dist/bin/next dev --hostname 127.0.0.1",
     "build": "next build",
-    "start": "next start",
+    "start": "node --env-file=../../.env node_modules/next/dist/bin/next start --hostname 127.0.0.1",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:integration": "node ../../scripts/assert-test-db.mjs && vitest run tests/full-workflow.postgres.test.ts"
   },
   "dependencies": {
     "@product-scout/agent": "workspace:*",
     "@product-scout/agent-sdk": "workspace:*",
     "@product-scout/domain": "workspace:*",
+    "@product-scout/evidence": "workspace:*",
     "@product-scout/db": "workspace:*",
     "@product-scout/research": "workspace:*",
     "@product-scout/ui": "workspace:*",

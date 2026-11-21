@@ -105,6 +105,9 @@ importers:
       '@product-scout/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@product-scout/evidence':
+        specifier: workspace:*
+        version: link:../../packages/evidence
       '@product-scout/research':
         specifier: workspace:*
         version: link:../../packages/research

@@ -14,6 +14,7 @@ import {
 } from './validation-plan';
 import {
   getResearchWorkflowInvocationKey,
+  getResearchWorkflowGoal,
   type ResearchWorkflowArtifact,
   type ResearchWorkflowStepResult,
 } from './research-workflow';
@@ -68,11 +69,17 @@ export class ResearchWorkflowReportHandler {
 
     const report = await new ResearchReportService(
       this.options.planProvider,
-      this.options.reportStore,
+      {
+        getById: (id) => this.options.reportStore.getById(id),
+        ensure: async (report) => {
+          if (input.isCancelled()) throw new Error('Report persistence cancelled');
+          return this.options.reportStore.ensure(report);
+        },
+      },
       this.options.now ?? (() => new Date()),
     ).generate({
       researchRunId: input.workflow.researchRunId,
-      goal: input.workflow.goal,
+      goal: getResearchWorkflowGoal(input.workflow),
       invocationKey: getResearchWorkflowInvocationKey(input.workflow),
       findings,
       opportunities,
@@ -80,11 +87,17 @@ export class ResearchWorkflowReportHandler {
     if (input.isCancelled()) return cancelledResult();
     const validationPlan = await new ValidationPlanService(
       this.options.validationPlanProvider,
-      this.options.validationPlanStore,
+      {
+        getById: (id) => this.options.validationPlanStore.getById(id),
+        ensure: async (plan) => {
+          if (input.isCancelled()) throw new Error('Validation plan persistence cancelled');
+          return this.options.validationPlanStore.ensure(plan);
+        },
+      },
       this.options.now ?? (() => new Date()),
     ).generate({
       researchRunId: input.workflow.researchRunId,
-      goal: input.workflow.goal,
+      goal: getResearchWorkflowGoal(input.workflow),
       invocationKey: getResearchWorkflowInvocationKey(input.workflow),
       report,
       opportunities,

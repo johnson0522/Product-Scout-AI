@@ -10,6 +10,8 @@
     "lint": "turbo lint",
     "test": "turbo test",
     "typecheck": "turbo typecheck",
+    "test:e2e": "playwright test",
+    "db:seed-owner": "pnpm --filter @product-scout/db exec node --env-file=../../.env scripts/seed-owner.mjs",
     "clean": "turbo clean",
     "db:generate": "pnpm --filter @product-scout/db generate",
     "db:push": "pnpm --filter @product-scout/db push",
@@ -18,7 +20,7 @@
     "db:test:down": "docker compose -f docker/docker-compose.test.yml down",
     "db:test:clean": "docker compose -f docker/docker-compose.test.yml down -v",
     "db:test:migrate": "node scripts/migrate-test-db.mjs",
-    "db:test:integration": "pnpm --filter @product-scout/db test:integration && pnpm --filter @product-scout/research test:integration"
+    "db:test:integration": "pnpm --filter @product-scout/db test:integration && pnpm --filter @product-scout/research test:integration && pnpm --filter @product-scout/web test:integration"
   },
   "devDependencies": {
     "@eslint/js": "^8.57.0",

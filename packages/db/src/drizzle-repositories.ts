@@ -29,6 +29,8 @@ import type {
   ResearchRunCreateInput,
   ResearchRunRepository,
   ResearchRunUpdateInput,
+  ResearchStepProgressInput,
+  ResearchStepRepository,
   ResearchReportRepository,
   SourceCreateInput,
   SourceRepository,
@@ -302,6 +304,54 @@ export class DrizzleResearchRunRepository implements ResearchRunRepository {
       return this.withSteps(after);
     }
     throw new AgentSessionBindingConflictError(id, after.agentSessionId ?? '', agentSessionId);
+  }
+}
+
+export class DrizzleResearchStepRepository implements ResearchStepRepository {
+  public constructor(private readonly db: Database) {}
+
+  public async findById(id: ResearchStep['id']): Promise<ResearchStep | null> {
+    const rows = await this.db.select().from(researchSteps)
+      .where(eq(researchSteps.id, id)).limit(1);
+    return rows[0] ? mapResearchStep(rows[0]) : null;
+  }
+
+  public async listByResearchRunId(
+    researchRunId: ResearchStep['researchRunId'],
+  ): Promise<readonly ResearchStep[]> {
+    const rows = await this.db.select().from(researchSteps)
+      .where(eq(researchSteps.researchRunId, researchRunId))
+      .orderBy(asc(researchSteps.createdAt));
+    return rows.map(mapResearchStep);
+  }
+
+  public async record(input: ResearchStepProgressInput): Promise<void> {
+    const isRunning = input.status === 'running';
+    await this.db.insert(researchSteps).values({
+      id: input.id,
+      researchRunId: input.researchRunId,
+      type: input.type,
+      status: input.status,
+      startedAt: isRunning ? sql`${input.occurredAt.toISOString()}` : null,
+      completedAt: isRunning ? null : sql`${input.occurredAt.toISOString()}`,
+      errorMessage: input.errorMessage,
+    }).onConflictDoUpdate({
+      target: [researchSteps.researchRunId, researchSteps.type],
+      set: {
+        status: input.status,
+        ...(isRunning
+          ? {
+              startedAt: sql`${input.occurredAt.toISOString()}`,
+              completedAt: null,
+              errorMessage: null,
+            }
+          : {
+              completedAt: sql`${input.occurredAt.toISOString()}`,
+              errorMessage: input.errorMessage ?? null,
+            }),
+        updatedAt: sql`now()`,
+      },
+    });
   }
 }
 

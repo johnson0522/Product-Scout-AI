@@ -27,7 +27,8 @@ export function createCancelResearchPostHandler(
       await resolveGateway().cancelResearch(context.params.id);
       return new NextResponse(null, { status: 204 });
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Cancellation failed';
+      const message = error instanceof ResearchRunNotFoundError || error instanceof InvalidResearchTransitionError
+        ? error.message : 'Cancellation failed';
       const status = error instanceof ResearchRunNotFoundError
         ? 404
         : error instanceof InvalidResearchTransitionError

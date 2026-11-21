@@ -64,14 +64,14 @@ function createEvent(
   }
 }
 
-function createHarness(status: ResearchRunStatus = 'running') {
+function createHarness(status: ResearchRunStatus = 'running', heartbeatIntervalMs = 60_000) {
   const eventStore = new MemoryEventStore();
   const liveEventPublisher = new InMemoryLiveEventPublisher();
   const handler = createResearchEventsGetHandler(() => ({
     runs: { findById: async () => ({ status }) },
     eventStore,
     liveEventPublisher,
-    heartbeatIntervalMs: 60_000,
+    heartbeatIntervalMs,
   }));
   return { eventStore, liveEventPublisher, handler };
 }
@@ -101,6 +101,22 @@ async function readNext(reader: ReadableStreamDefaultReader<Uint8Array>): Promis
 }
 
 describe('GET /api/research/:id/events', () => {
+  it('recovers a durable event without a process-local notification', async () => {
+    const harness = createHarness('running', 5);
+    const response = await harness.handler(new Request('http://localhost/api/research/run-1/events'), { params: { id: 'run-1' } });
+    await harness.eventStore.append(createEvent('run-1', 'event-1', 'research.completed'));
+    expect(await readAll(response)).toContain('event: research.completed');
+  });
+
+  it('cleans up when the reader cancels before a late notification', async () => {
+    const harness = createHarness();
+    const response = await harness.handler(new Request('http://localhost/api/research/run-1/events'), { params: { id: 'run-1' } });
+    const reader = response.body!.getReader();
+    await reader.cancel();
+    await new ProductEventStorePublisher(harness.eventStore, harness.liveEventPublisher)
+      .publish(createEvent('run-1', 'late', 'research.completed'));
+    expect((await reader.read()).done).toBe(true);
+  });
   it('returns SSE headers and replays terminal events', async () => {
     const harness = createHarness('completed');
     await new ProductEventStorePublisher(harness.eventStore).publish(createEvent('run-1', 'event-1', 'research.started'));

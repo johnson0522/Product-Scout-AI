@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import type { ResearchRun } from '@product-scout/domain';
 import type { AgentGateway, CreateResearchInput } from '@product-scout/research';
-import { AgentGatewayRuntimeError } from '@product-scout/research';
+import { ApiError, readObject, requiredText } from '../../../lib/product-api';
 
 export function createResearchPostHandler(
   resolveGateway: () => AgentGateway,
@@ -10,11 +10,11 @@ export function createResearchPostHandler(
   return async (request: Request): Promise<NextResponse> => {
     let input: CreateResearchInput;
     try {
-      input = parseCreateResearchInput(await request.json());
+      input = parseCreateResearchInput(await readObject(request));
     } catch (error: unknown) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : 'Invalid request body' },
-        { status: 400 },
+        { status: error instanceof ApiError ? error.status : 400 },
       );
     }
 
@@ -22,16 +22,26 @@ export function createResearchPostHandler(
     try {
       const gateway = resolveGateway();
       run = await gateway.createResearch(input);
-      await gateway.startResearch(run.id);
+      void gateway.startResearch(run.id).catch((error: unknown) => {
+        // Gateway records business failure. Also retain an operational signal if
+        // failure persistence itself fails; do not log credentials or raw output.
+        console.error('Research background execution failed', {
+          researchRunId: run?.id,
+          errorType: error instanceof Error ? error.name : 'UnknownError',
+        });
+      });
       return NextResponse.json({ researchRunId: run.id }, { status: 201 });
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Research failed';
+      if (!(error instanceof ApiError)) console.error('Research creation failed', {
+        errorType: error instanceof Error ? error.name : 'UnknownError',
+      });
+      const message = error instanceof ApiError ? error.message : 'Service unavailable';
       const body = run === undefined
         ? { error: message }
         : { error: message, researchRunId: run.id };
       return NextResponse.json(
         body,
-        { status: error instanceof AgentGatewayRuntimeError ? 502 : 500 },
+        { status: error instanceof ApiError ? error.status : 500 },
       );
     }
   };
@@ -51,7 +61,7 @@ function parseCreateResearchInput(value: unknown): CreateResearchInput {
   const constraints = parseConstraints(value.constraints);
   return {
     projectId: value.projectId,
-    goal: value.goal,
+    goal: requiredText(value.goal, 'goal', 4000),
     ...(constraints === undefined ? {} : { constraints }),
   };
 }

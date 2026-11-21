@@ -15,16 +15,21 @@ import {
   DrizzleEvidenceAcquisitionRepository,
   DrizzleEvidenceStoreRepository,
   DrizzleOpportunityRepository,
+  DrizzleProjectRepository,
   DrizzleProductEventStore,
   DrizzleResearchFindingRepository,
   DrizzleResearchReportRepository,
   DrizzleResearchRunRepository,
+  DrizzleResearchStepRepository,
+  DrizzleSourceRepository,
   DrizzleValidationPlanRepository,
   type Database,
 } from '@product-scout/db';
 import {
   DefaultAgentGateway,
   InMemoryLiveEventPublisher,
+  HttpsWebFetcher,
+  SourceResearchSearch,
   type AgentGateway,
   type LiveEventPublisher,
   type ProductEventStore,
@@ -32,6 +37,7 @@ import {
 } from '@product-scout/research';
 
 import type { ResearchRunRepository } from '@product-scout/db';
+import { ProductApi } from './product-api';
 
 export interface WebResearchDependencies {
   readonly gateway: AgentGateway;
@@ -41,6 +47,32 @@ export interface WebResearchDependencies {
 }
 
 let dependencies: WebResearchDependencies | undefined;
+let database: Database | undefined;
+
+function getDatabase(): Database {
+  if (database !== undefined) return database;
+  const url = process.env.DATABASE_URL;
+  if (!url?.trim()) throw new Error('DATABASE_URL is required');
+  database = createDb(url).db;
+  return database;
+}
+
+export function getProductApi(): ProductApi {
+  const db = getDatabase();
+  const ownerId = process.env.PRODUCT_SCOUT_OWNER_ID;
+  if (!ownerId) throw new Error('PRODUCT_SCOUT_OWNER_ID is required');
+  return new ProductApi({
+    projects: new DrizzleProjectRepository(db),
+    runs: new DrizzleResearchRunRepository(db),
+    acquisitions: new DrizzleEvidenceAcquisitionRepository(db),
+    evidence: new DrizzleEvidenceStoreRepository(db),
+    claims: new DrizzleClaimRepository(db),
+    findings: new DrizzleResearchFindingRepository(db),
+    opportunities: new DrizzleOpportunityRepository(db),
+    reports: new DrizzleResearchReportRepository(db),
+    validationPlans: new DrizzleValidationPlanRepository(db),
+  }, ownerId);
+}
 
 export function getAgentGateway(): AgentGateway {
   return getDependencies().gateway;
@@ -62,15 +94,22 @@ function getDependencies(): WebResearchDependencies {
   }
 
   const repoRoot = resolveRepositoryRoot();
-  const { db } = createDb(databaseUrl);
+  const db = getDatabase();
   const runs = new DrizzleResearchRunRepository(db);
   const eventStore = new DrizzleProductEventStore(db);
+  const stepStore = new DrizzleResearchStepRepository(db);
   const liveEventPublisher = new InMemoryLiveEventPublisher();
-  const runtimeFactory = createProductionRuntimeFactory(db, repoRoot, process.env);
+  // Defer provider configuration until execution so reads/cancellation remain
+  // available even when a model or Search provider is temporarily unconfigured.
+  const runtimeFactory: AgentRuntimeFactory = {
+    metadata: { runtime: 'research-workflow', workflow: 'product-scout-research-v0.1' },
+    create: async () => createProductionRuntimeFactory(db, repoRoot, process.env).create(),
+  };
 
   const gateway = new DefaultAgentGateway(runs, runtimeFactory, {
     eventStore,
     liveEventPublisher,
+    stepStore,
   });
   dependencies = { gateway, runs, eventStore, liveEventPublisher };
   return dependencies;
@@ -94,6 +133,9 @@ export function createProductionRuntimeFactory(
   const maxSources = readPositiveInteger(env.AGENT_MAX_SOURCES, 100, 'AGENT_MAX_SOURCES');
   const maxSearches = readPositiveInteger(env.AGENT_MAX_SEARCHES, 30, 'AGENT_MAX_SEARCHES');
   const maxRounds = readPositiveInteger(env.AGENT_MAX_ROUNDS, 3, 'AGENT_MAX_ROUNDS');
+  if (maxSources > 100 || maxSearches > 30 || maxRounds > 3) {
+    throw new Error('V0.1 budgets cannot exceed 100 sources, 30 searches, or 3 rounds');
+  }
   if (maxSources < 4) {
     throw new Error('AGENT_MAX_SOURCES must be at least 4 for the four research steps');
   }
@@ -111,7 +153,9 @@ export function createProductionRuntimeFactory(
     ?? createProductionResearchWorkflowRuntimeFactory;
 
   return createWorkflowFactory({
-    search: overrides.createSearch?.() ?? createSearchTool(readSearchConfig(env)),
+    search: overrides.createSearch?.() ?? new SourceResearchSearch(
+      createSearchTool(readSearchConfig(env)), new HttpsWebFetcher(), new DrizzleSourceRepository(db),
+    ),
     evidenceRepository: new DrizzleEvidenceStoreRepository(db),
     evidenceAcquisitionRepository: new DrizzleEvidenceAcquisitionRepository(db),
     claimRepository: new DrizzleClaimRepository(db),
@@ -119,7 +163,9 @@ export function createProductionRuntimeFactory(
     opportunityStore: new DrizzleOpportunityRepository(db),
     reportStore: new DrizzleResearchReportRepository(db),
     validationPlanStore: new DrizzleValidationPlanRepository(db),
-    searchLimit: Math.min(100, Math.floor(maxSources / 4)),
+    // Twenty 8k excerpts leave headroom under the synthesis 200k-character
+    // envelope. MAX_SOURCES is an upper bound, never a collection target.
+    searchLimit: Math.min(5, Math.floor(maxSources / 4)),
     workflowTimeoutMs: timeoutMs,
   }, {
     processCwd: repoRoot,

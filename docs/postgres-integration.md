@@ -64,3 +64,15 @@ Without a running isolated PostgreSQL service, these explicit integration
 commands are blocked. Ordinary `pnpm test` remains a unit-test command; its
 PostgreSQL files are skipped when the safety marker is absent so a developer
 cannot accidentally write to an unknown database.
+
+## V0.1 full workflow acceptance
+
+The same `pnpm db:test:integration` command also runs
+`apps/web/tests/full-workflow.postgres.test.ts`. It executes real Route Handlers,
+Gateway, Coordinator, Search/Evidence services and all persistence repositories
+against the dedicated test database. Search, Fetch, and structured model ports
+are explicitly injected test implementations; this is not live-DSH acceptance.
+The test verifies owner selection, caller constraints, all six steps, Sources,
+acquisitions, Claims, Findings, score, Report, seven-day plan and durable SSE replay.
+Cleanup removes only the test-generated owner's rows and explicitly prefixed
+Evidence/Source records. No database reset or truncate is performed.

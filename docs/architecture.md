@@ -756,3 +756,55 @@ This activation does not make the process-local Coordinator durable. Gateway
 trajectory events are still published after `run()` returns rather than during
 execution. Durable ResearchStep updates, restart recovery, presentation APIs,
 and truly live incremental event delivery remain later phases. See ADR-010.
+
+### Incremental Progress and Durable Steps (V0.1-D3-G-B)
+
+`AgentRunInput` now accepts an optional asynchronous event sink. The Workflow
+Runtime awaits that sink for agent and step lifecycle events, while retaining
+the complete trajectory. The Gateway deduplicates both paths by event ID,
+persists Product Events before notifying live SSE subscribers, and treats
+delivery failure as a run failure.
+
+Step lifecycle is also projected into `research_steps` through a persistence-
+agnostic port. A stable UUID derived from ResearchRun and step type identifies
+the business step; runtime attempts and hidden reasoning are not copied into
+PostgreSQL. The existing unique `(research_run_id, type)` constraint makes
+retries update the same row.
+
+`POST /api/research` now returns the created ResearchRun ID without waiting for
+the workflow to finish. Execution continues in the current server process, and
+failures are observed through ResearchRun state and durable events. This is not
+a queue or durable worker: process restart recovery and exactly-once execution
+remain outside V0.1-D3-G-B. See ADR-011.
+
+### V0.1 Local Product Workspace and Source Collection
+
+The local Product UI now exposes Project/Research read and create APIs,
+reports, opportunities, score explanations, MVPs, seven-day plans, and
+Finding → Claim → Evidence links. Repository queries are scoped to the configured
+server owner. It has no public authentication contract; dev/start bind to loopback
+and Route Handlers reject non-local/cross-origin requests. See ADR-012.
+
+Search is decorated by `SourceResearchSearch`: a bounded HTTPS fetch port
+collects original page excerpts and a Source repository stores metadata. Failed
+fetches retain the original Search excerpt and explicitly report failure. The
+fetch adapter resolves and pins public IPv4 destinations, rejects redirects,
+and enforces a shared DNS/request deadline and streamed byte cap. Acquisition
+scope, not URL uniqueness, continues to determine Evidence idempotency.
+
+Caller constraints reach Search and each structured reasoning operation while
+the original goal remains unchanged in business persistence. Tools and Evidence
+notifications use the awaited Runtime event sink. The Gateway serializes state
+writes per run in its process, checks current state before writes, closes active
+steps on cancellation/failure, and persists terminal run status before terminal
+notifications. This does not provide cross-process locking or an atomic outbox.
+SSE durable polling recovers notifications missed by the in-process publisher.
+
+The pinned DSH SDK must retain its module location for `import.meta` child-runtime
+resolution. The Next server build resolves that SDK from its importing Agent
+package and leaves it as a native dynamic import; no DSH API is introduced into
+Product code and no DSH version changes. This build is for the checked-out local
+workspace, not a validated standalone-container deployment.
+
+See `v0.1-acceptance.md` for current executed checks. Historical phase-status
+sections above describe their respective milestones, not current remaining work.

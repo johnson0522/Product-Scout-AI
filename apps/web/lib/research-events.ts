@@ -68,13 +68,14 @@ export function createResearchEventsGetHandler(
           cleanup();
           controller.close();
         };
-        cancelStream = close;
+        cancelStream = (): void => { closed = true; cleanup(); };
 
         const fail = (error: unknown): void => {
           if (closed) {
             return;
           }
-          const message = error instanceof Error ? error.message : String(error);
+          console.error('Research event stream failed', { errorType: error instanceof Error ? error.name : 'UnknownError' });
+          const message = 'Research event stream unavailable';
           try {
             controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: message })}\n\n`));
           } finally {
@@ -83,6 +84,7 @@ export function createResearchEventsGetHandler(
         };
 
         const send = (event: StoredProductEvent, fallbackSequence: number): void => {
+          if (closed) return;
           const sequence = event.sequenceNumber ?? fallbackSequence;
           if (sequence <= lastSequence) {
             return;
@@ -96,6 +98,7 @@ export function createResearchEventsGetHandler(
         };
 
         const flushDurable = async (): Promise<void> => {
+          if (closed) return;
           const events = await dependencies.eventStore.listByResearchRunId(
             context.params.id,
             lastSequence,
@@ -132,6 +135,9 @@ export function createResearchEventsGetHandler(
         heartbeat = setInterval(() => {
           if (!closed) {
             controller.enqueue(encoder.encode(': heartbeat\n\n'));
+            // Durable polling also covers independently bundled Next routes or
+            // missed process-local notifications.
+            if (!replaying) liveFlush = liveFlush.then(flushDurable).catch(fail);
           }
         }, heartbeatInterval);
 

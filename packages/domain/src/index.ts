@@ -103,7 +103,7 @@ export type ProductEvent =
   | (ProductEventBase & {
       readonly type: 'research.evidence.created';
       readonly evidenceId: EvidenceId;
-      readonly sourceId: SourceId;
+      readonly sourceId?: SourceId;
     })
   | (ProductEventBase & {
       readonly type: 'research.step.completed';

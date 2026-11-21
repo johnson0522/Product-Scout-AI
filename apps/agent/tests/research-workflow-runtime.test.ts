@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   FakeResearchWorkflowHandlers,
@@ -61,6 +61,45 @@ describe('ResearchWorkflowRuntime', () => {
       errorMessage: 'analysis failed',
     });
     expect(result.trajectory.events.some((event) => event.type === 'agent.completed')).toBe(false);
+  });
+
+  it('delivers step start before a running handler completes and does not duplicate events', async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fake = new FakeResearchWorkflowHandlers();
+    const original = fake.handlers.get('market_understanding');
+    const handlers = new Map(fake.handlers);
+    handlers.set('market_understanding', async (input) => {
+      await gate;
+      if (original === undefined) throw new Error('missing handler');
+      return original(input);
+    });
+    const runtime = new ResearchWorkflowRuntime({
+      coordinator: new InMemoryResearchWorkflowCoordinator({
+        definition: RESEARCH_ANALYSIS_WORKFLOW_DEFINITION,
+        handlers,
+      }),
+      createSessionId: () => 'analysis-session-1',
+    });
+    const session = await runtime.createSession(sessionInput());
+    const delivered: string[] = [];
+
+    const running = runtime.run({
+      sessionId: session.id,
+      onEvent: async (event) => { delivered.push(event.eventId); },
+    });
+    await vi.waitFor(() => expect(delivered).toHaveLength(2));
+    expect((await runtime.getTrajectory(session.id)).events.map((event) => event.type)).toEqual([
+      'agent.started',
+      'research.step.started',
+    ]);
+
+    release?.();
+    const result = await running;
+    expect(new Set(delivered).size).toBe(delivered.length);
+    expect(delivered).toEqual(result.trajectory.events.map((event) => event.eventId));
+    expect(result.trajectory.events.find((event) => event.type === 'research.step.started')?.stepId)
+      .toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it('cancels the coordinator and active reasoner without emitting a late failure', async () => {
