@@ -1,4 +1,5 @@
 import type { ClaimId } from '@product-scout/evidence';
+import { createResearchQualitySnapshot, RESEARCH_QUALITY_RULES_VERSION, type ResearchQualitySnapshotRepository } from '@product-scout/evidence';
 
 import {
   createOpportunityAggregateId,
@@ -40,6 +41,7 @@ export interface ResearchWorkflowAnalysisHandlerOptions {
     'ensureClaim' | 'ensureFinding'
   >;
   readonly qualityService: Pick<ResearchQualityAssessmentService, 'assessFinding'>;
+  readonly qualityStore: ResearchQualitySnapshotRepository;
   readonly opportunityPlanProvider: OpportunityAnalysisPlanProvider;
   readonly opportunityStore: OpportunityStore;
   readonly now?: () => Date;
@@ -146,6 +148,16 @@ export class ResearchWorkflowAnalysisHandler {
         finding.id,
         assessments,
       );
+      if (input.isCancelled()) return cancelledResult(stepId);
+      await this.options.qualityStore.ensure(createResearchQualitySnapshot({
+        researchRunId: finding.researchRunId,
+        findingId: finding.id,
+        workflowInvocationKey: invocationKey,
+        rulesVersion: RESEARCH_QUALITY_RULES_VERSION,
+        assessedAt: this.now(),
+        inputs: assessments,
+        assessment: quality,
+      }));
       artifacts.push(
         { kind: 'finding', findingId: finding.id, claimIds: finding.claimIds },
         qualityArtifact(quality),

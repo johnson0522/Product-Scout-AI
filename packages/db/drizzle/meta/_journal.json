@@ -57,6 +57,13 @@
       "when": 1794646711069,
       "tag": "0007_black_scourge",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1795319435107,
+      "tag": "0008_hot_goliath",
+      "breakpoints": true
     }
   ]
 }

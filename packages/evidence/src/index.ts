@@ -5,3 +5,6 @@ export * from './evidence-acquisition-repository';
 export * from './claim-model';
 export * from './claim-repository';
 export * from './research-finding-repository';
+export * from './research-quality-model';
+export * from './research-quality-repository';
+export * from './research-quality-validation';

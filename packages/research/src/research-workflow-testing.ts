@@ -12,6 +12,32 @@ import type {
   OpportunityAnalysisPlanInput,
   OpportunityAnalysisPlanProvider,
 } from './opportunity-analysis';
+import {
+  createResearchQualitySnapshot,
+  ResearchQualitySnapshotConflictError,
+  type ResearchQualitySnapshot,
+  type ResearchQualitySnapshotRepository,
+} from '@product-scout/evidence';
+
+/** Explicit test port; production composition always supplies the Drizzle store. */
+export class FakeResearchQualitySnapshotRepository implements ResearchQualitySnapshotRepository {
+  public readonly values: ResearchQualitySnapshot[] = [];
+  public async ensure(input: ResearchQualitySnapshot): Promise<ResearchQualitySnapshot> {
+    const snapshot = createResearchQualitySnapshot(input);
+    const existing = this.values.find((value) => value.findingId === snapshot.findingId
+      && value.workflowInvocationKey === snapshot.workflowInvocationKey && value.rulesVersion === snapshot.rulesVersion);
+    if (existing !== undefined) {
+      if (JSON.stringify(existing.inputs) !== JSON.stringify(snapshot.inputs)
+        || JSON.stringify(existing.assessment) !== JSON.stringify(snapshot.assessment)) throw new ResearchQualitySnapshotConflictError();
+      return existing;
+    }
+    this.values.push(snapshot);
+    return snapshot;
+  }
+  public async listByResearchRunId(id: string): Promise<readonly ResearchQualitySnapshot[]> {
+    return this.values.filter((value) => value.researchRunId === id);
+  }
+}
 
 export interface FakeOpportunityAnalysisPlanProviderOptions {
   readonly plan?: OpportunityAnalysisPlan;

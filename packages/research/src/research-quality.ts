@@ -7,107 +7,16 @@ import type {
   ResearchFindingTrace,
 } from './research-finding-service';
 
-export type EvidenceSemanticKind =
-  | 'verifiable_fact'
-  | 'user_report'
-  | 'analysis'
-  | 'recommendation'
-  | 'unknown';
-
-export type EvidenceSourceKind =
-  | 'primary_research'
-  | 'first_party'
-  | 'community'
-  | 'independent_third_party'
-  | 'other'
-  | 'unknown';
-
-export type ClaimEvidenceRelation = 'supports' | 'contradicts' | 'unclear';
-
-export type ResearchQualityStatus =
-  | 'sufficient'
-  | 'insufficient'
-  | 'conflicted'
-  | 'needs_review';
-
-export type QualityRuleId =
-  | 'RQC-001'
-  | 'RQC-002'
-  | 'RQC-003'
-  | 'RQC-004'
-  | 'RQC-005'
-  | 'RQC-006'
-  | 'RQC-007';
-
-export type QualityIssueCode =
-  | 'UNASSESSED_EVIDENCE_RELATION'
-  | 'NO_SUPPORTING_EVIDENCE'
-  | 'SINGLE_SUPPORTING_SOURCE'
-  | 'DUPLICATE_SUPPORTING_SOURCE'
-  | 'CONFLICTING_EVIDENCE_RELATIONS'
-  | 'EVIDENCE_CLASSIFICATION_INCOMPLETE'
-  | 'STRONG_CLAIM_WITH_LIMITED_SUPPORT';
-
-export type AssessmentRuleOutcome = 'passed' | 'triggered' | 'not_applicable';
-
-export interface ClaimEvidenceAssessmentInput {
-  readonly claimId: ClaimId;
-  readonly evidenceId: EvidenceId;
-  readonly relation: ClaimEvidenceRelation;
-  readonly semanticKind: EvidenceSemanticKind;
-  readonly sourceKind: EvidenceSourceKind;
-}
-
-export interface QualityIssue {
-  readonly code: QualityIssueCode;
-  readonly ruleId: QualityRuleId;
-  readonly claimId: ClaimId;
-  readonly evidenceIds: readonly EvidenceId[];
-  readonly sourceUrls: readonly string[];
-  readonly reason: string;
-  readonly blocking: boolean;
-  readonly requiresHumanReview: boolean;
-}
-
-export interface AssessmentRuleResult {
-  readonly ruleId: QualityRuleId;
-  readonly outcome: AssessmentRuleOutcome;
-  readonly claimId: ClaimId;
-  readonly evidenceIds: readonly EvidenceId[];
-  readonly reason: string;
-  readonly blocking: boolean;
-  readonly requiresHumanReview: boolean;
-}
-
-export interface EvidenceConflictCandidate {
-  readonly claimId: ClaimId;
-  readonly supportingEvidenceIds: readonly EvidenceId[];
-  readonly contradictingEvidenceIds: readonly EvidenceId[];
-  readonly reason: string;
-  readonly requiresHumanReview: true;
-}
-
-export interface ClaimQualityAssessment {
-  readonly claimId: ClaimId;
-  readonly status: ResearchQualityStatus;
-  readonly issues: readonly QualityIssue[];
-  readonly ruleResults: readonly AssessmentRuleResult[];
-  readonly supportingEvidenceIds: readonly EvidenceId[];
-  readonly contradictingEvidenceIds: readonly EvidenceId[];
-  readonly unclearEvidenceIds: readonly EvidenceId[];
-  readonly distinctSupportingSourceUrls: readonly string[];
-  readonly conflictCandidates: readonly EvidenceConflictCandidate[];
-  readonly requiresHumanReview: boolean;
-}
-
-export interface ResearchQualityAssessment {
-  readonly findingId: FindingId;
-  readonly status: ResearchQualityStatus;
-  readonly claims: readonly ClaimQualityAssessment[];
-  readonly issues: readonly QualityIssue[];
-  readonly conflictCandidates: readonly EvidenceConflictCandidate[];
-  readonly requiresHumanReview: boolean;
-}
+import type {
+  ClaimEvidenceAssessmentInput, AssessmentRuleResult,
+  QualityRuleId, QualityIssueCode, AssessmentRuleOutcome, QualityIssue,
+  ClaimQualityAssessment, ResearchQualityAssessment, ResearchQualityStatus,
+} from '@product-scout/evidence';
+export type {
+  ClaimEvidenceAssessmentInput, AssessmentRuleResult, EvidenceSourceKind, EvidenceSemanticKind,
+  ClaimEvidenceRelation, QualityRuleId, QualityIssueCode, AssessmentRuleOutcome, QualityIssue,
+  EvidenceConflictCandidate, ClaimQualityAssessment, ResearchQualityAssessment, ResearchQualityStatus,
+} from '@product-scout/evidence';
 
 export class InvalidQualityAssessmentInputError extends Error {
   public constructor(message: string) {

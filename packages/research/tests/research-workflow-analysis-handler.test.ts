@@ -1,3 +1,4 @@
+import { FakeResearchQualitySnapshotRepository } from '@product-scout/research';
 import { describe, expect, it } from 'vitest';
 import type { Finding, Opportunity } from '@product-scout/domain';
 import {
@@ -154,6 +155,7 @@ function setup(
   );
   const providerCalls: unknown[] = [];
   const opportunities = new MemoryOpportunityStore();
+  const qualityStore = new FakeResearchQualitySnapshotRepository();
   const analysis = new ResearchWorkflowAnalysisHandler({
     planProvider: {
       createPlan: async (input) => {
@@ -162,17 +164,18 @@ function setup(
       },
     },
     findingService,
+    qualityStore,
     qualityService: new ResearchQualityAssessmentService(findingService),
     opportunityPlanProvider: { createPlan: async () => opportunityPlan },
     opportunityStore: opportunities,
     now: () => new Date('2026-11-01T01:00:00.000Z'),
   });
-  return { analysis, claims, findings, opportunities, providerCalls };
+  return { analysis, claims, findings, opportunities, providerCalls, qualityStore };
 }
 
 describe('ResearchWorkflowAnalysisHandler', () => {
   it('persists explicit synthesis, assesses quality, and emits typed artifacts', async () => {
-    const { analysis, claims, findings, providerCalls } = setup();
+    const { analysis, claims, findings, providerCalls, qualityStore } = setup();
 
     const result = await analysis.handler(handlerInput());
 
@@ -186,6 +189,13 @@ describe('ResearchWorkflowAnalysisHandler', () => {
     });
     expect(claims.values).toHaveLength(1);
     expect(findings.values).toHaveLength(1);
+    expect(qualityStore.values).toHaveLength(1);
+    expect(qualityStore.values[0]).toMatchObject({
+      researchRunId: 'run-analysis', rulesVersion: 'rqc-v1',
+      workflowInvocationKey: 'invocation-analysis',
+      assessment: { status: 'sufficient', requiresHumanReview: false },
+    });
+    expect(qualityStore.values[0]?.inputs).toHaveLength(2);
     expect(providerCalls).toEqual([expect.objectContaining({
       researchRunId: 'run-analysis',
       invocationKey: 'invocation-analysis',
@@ -203,6 +213,7 @@ describe('ResearchWorkflowAnalysisHandler', () => {
     await first.analysis.handler(input);
     expect(first.claims.values).toHaveLength(1);
     expect(first.findings.values).toHaveLength(1);
+    expect(first.qualityStore.values).toHaveLength(1);
 
     const changed = new ResearchWorkflowAnalysisHandler({
       planProvider: {
@@ -217,6 +228,7 @@ describe('ResearchWorkflowAnalysisHandler', () => {
         first.claims,
         first.findings,
       ),
+      qualityStore: new FakeResearchQualitySnapshotRepository(),
       qualityService: new ResearchQualityAssessmentService(new ResearchFindingService(
         new MemoryEvidenceRepository(evidence),
         new AssociatedEvidenceRepository(),
@@ -258,7 +270,7 @@ describe('ResearchWorkflowAnalysisHandler', () => {
         relation: 'contradicts' as const,
       })),
     };
-    const { analysis } = setup(plan);
+    const { analysis, qualityStore } = setup(plan);
 
     const result = await analysis.handler(handlerInput());
 
@@ -274,6 +286,21 @@ describe('ResearchWorkflowAnalysisHandler', () => {
         },
       ],
     });
+    expect(qualityStore.values[0]?.assessment.status).toBe('insufficient');
+  });
+
+  it('propagates a failed quality write and permits a replay without duplicate aggregates', async () => {
+    const state = setup();
+    const ensure = state.qualityStore.ensure.bind(state.qualityStore);
+    state.qualityStore.ensure = async () => { throw new Error('quality insert failed'); };
+    await expect(state.analysis.handler(handlerInput())).rejects.toThrow('quality insert failed');
+    expect(state.qualityStore.values).toHaveLength(0);
+    expect(state.opportunities.values.size).toBe(0);
+    state.qualityStore.ensure = ensure;
+    await expect(state.analysis.handler(handlerInput())).resolves.toMatchObject({ status: 'completed' });
+    expect(state.claims.values).toHaveLength(1);
+    expect(state.findings.values).toHaveLength(1);
+    expect(state.qualityStore.values).toHaveLength(1);
   });
 
   it('does not persist an Opportunity that references a quality-blocked Finding', async () => {

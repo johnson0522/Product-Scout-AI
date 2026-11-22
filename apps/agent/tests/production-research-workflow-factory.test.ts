@@ -1,3 +1,4 @@
+import { FakeResearchQualitySnapshotRepository } from '@product-scout/research';
 import { describe, expect, it } from 'vitest';
 
 import { FakeReasoner } from '@product-scout/agent-sdk/testing';
@@ -83,6 +84,7 @@ function dependencies(): ProductionResearchWorkflowDependencies {
       async getById() { return null; },
       async listByResearchRunId() { return []; },
     },
+    qualityStore: new FakeResearchQualitySnapshotRepository(),
     findingRepository: {
       async create() {},
       async getById() { return null; },

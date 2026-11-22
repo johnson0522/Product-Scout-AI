@@ -21,3 +21,4 @@ export * from './drizzle-evidence-store';
 export * from './drizzle-evidence-acquisition';
 export * from './drizzle-claim-repository';
 export * from './drizzle-finding-repository';
+export * from './drizzle-research-quality';

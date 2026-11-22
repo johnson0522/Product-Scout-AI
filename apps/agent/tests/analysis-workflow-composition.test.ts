@@ -1,3 +1,4 @@
+import { FakeResearchQualitySnapshotRepository } from '@product-scout/research';
 import { describe, expect, it } from 'vitest';
 
 import { FakeReasoner } from '@product-scout/agent-sdk/testing';
@@ -95,6 +96,7 @@ describe('createAnalysisWorkflowRuntimeFactory', () => {
     const validationPlans = new Map<string, ValidationPlan>();
     let nextEvidence = 1;
     const factory = createResearchWorkflowRuntimeFactory({
+      qualityStore: new FakeResearchQualitySnapshotRepository(),
       reasoner,
       opportunityReasoner,
       reportReasoner,
@@ -212,6 +214,7 @@ describe('createAnalysisWorkflowRuntimeFactory', () => {
     const reportReasoner = new FakeReasoner();
     const validationPlanReasoner = new FakeReasoner();
     const factory = createResearchWorkflowRuntimeFactory({
+      qualityStore: new FakeResearchQualitySnapshotRepository(),
       reasoner,
       opportunityReasoner,
       reportReasoner,

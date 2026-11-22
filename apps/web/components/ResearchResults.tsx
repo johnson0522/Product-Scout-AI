@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { list, number, object, records, requestJson, text } from '../lib/product-client';
+import type { ResearchQualitySnapshot } from '@product-scout/evidence/research-quality-model';
+import { list, number, object, records, requestJson, text, qualitySnapshots, safeSource } from '../lib/product-client';
+import { QualityDiagnostics } from './QualityDiagnostics';
 
 interface Results {
   readonly reports: readonly Record<string, unknown>[];
@@ -10,6 +12,7 @@ interface Results {
   readonly evidence: readonly Record<string, unknown>[];
   readonly claims: readonly Record<string, unknown>[];
   readonly findings: readonly Record<string, unknown>[];
+  readonly quality: readonly ResearchQualitySnapshot[];
 }
 
 export function ResearchResults({ runId, status }: { readonly runId: string; readonly status: string }) {
@@ -21,13 +24,14 @@ export function ResearchResults({ runId, status }: { readonly runId: string; rea
       requestJson(`/api/research/${encodeURIComponent(runId)}/report`),
       requestJson(`/api/research/${encodeURIComponent(runId)}/evidence`),
     ]).then(([report, trace]) => {
-      if (active) { setData({ reports: records(report.reports), opportunities: records(report.opportunities), plans: records(report.validationPlans), evidence: records(trace.evidence), claims: records(trace.claims), findings: records(trace.findings) }); setError(''); }
+      if (active) { setData({ reports: records(report.reports), opportunities: records(report.opportunities), plans: records(report.validationPlans), evidence: records(trace.evidence), claims: records(trace.claims), findings: records(trace.findings), quality: qualitySnapshots(trace.qualityAssessments) }); setError(''); }
     }).catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : 'Could not load results'); });
     return () => { active = false; };
   }, [runId, status]);
   if (error) return <p role="alert" className="error">{error}</p>;
   if (!data) return <p>Loading research results…</p>;
   return <>
+    <QualityDiagnostics findings={data.findings} claims={data.claims} snapshots={data.quality} />
     <section className="panel"><h2>Research report</h2>
       {data.reports.length === 0 && <p>{status === 'completed' ? 'No report is available.' : 'The report appears after research and validation-plan generation finish.'}</p>}
       {data.reports.map((report) => <article key={text(report.id)}><h3>{text(report.title)}</h3><p className="prose">{text(report.executiveSummary)}</p>
@@ -59,7 +63,4 @@ export function ResearchResults({ runId, status }: { readonly runId: string; rea
 function References({ ids, kind }: { readonly ids: readonly unknown[]; readonly kind: string }) {
   if (ids.length === 0) return null;
   return <p className="references">{kind}: {ids.map((id, index) => <a key={text(id)} href={`#${kind}-${text(id)}`}>{index + 1}</a>)}</p>;
-}
-function safeSource(value: string): string | null {
-  try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : null; } catch { return null; }
 }

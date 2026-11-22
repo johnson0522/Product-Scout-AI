@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { qualitySnapshotFixture } from '../../../tests/fixtures/research-quality';
 import type { Project, ResearchRun } from '@product-scout/domain';
 import { ProductApi, apiRoute, readObject, requireLocalRequest, type ProductData } from '../lib/product-api';
 
@@ -14,6 +15,7 @@ function fixture() {
     runs: { findById: async () => run, listByProjectId: async () => [run] },
     acquisitions: { listByResearchRunId: async () => [{ id: 'acq', researchRunId: runId, evidenceId: 'e1', workflowInvocationKey: 'i', stepId: 'market_understanding', sourceFingerprint: 'fp', capturedAt: new Date() }] },
     evidence: { getById: async () => ({ id: 'e1', title: 'Original', excerpt: 'Source excerpt', source: { url: 'https://example.com' }, retrievedAt: new Date() }) },
+    quality: { listByResearchRunId: async () => [] },
     claims: { listByResearchRunId: async () => [] }, findings: { listByResearchRunId: async () => [] },
     reports: { listByResearchRunId: async () => [] }, opportunities: { listByResearchRunId: async () => [] }, validationPlans: { listByResearchRunId: async () => [] },
   };
@@ -50,6 +52,24 @@ describe('local Product API authorization and errors', () => {
     const { data } = fixture();
     const api = new ProductApi({ ...data, evidence: { getById: async () => null } }, owner);
     await expect(api.evidenceForRun(runId)).rejects.toThrow('missing');
+  });
+  it('returns saved quality diagnostics through the owner-scoped Evidence contract', async () => {
+    const { data, api } = fixture();
+    const snapshot = qualitySnapshotFixture({ researchRunId: runId });
+    data.quality.listByResearchRunId = vi.fn(async () => [snapshot]);
+    expect((await api.evidenceForRun(runId)).qualityAssessments).toEqual([snapshot]);
+    const foreign = new ProductApi(data, '40000000-0000-4000-8000-000000000004');
+    vi.mocked(data.quality.listByResearchRunId).mockClear();
+    await expect(foreign.evidenceForRun(runId)).rejects.toMatchObject({ status: 404 });
+    expect(data.quality.listByResearchRunId).not.toHaveBeenCalled();
+  });
+  it('propagates unavailable quality storage rather than returning empty approvals', async () => {
+    const { api } = fixture();
+    api.data.quality.listByResearchRunId = async () => { throw new Error('private database detail'); };
+    const route = apiRoute(() => api, async (product) => Response.json(await product.evidenceForRun(runId)));
+    const response = await route(new Request('http://localhost/api/research'), undefined);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Service unavailable' });
   });
   it('validates IDs, request size and JSON', async () => {
     const { api } = fixture();

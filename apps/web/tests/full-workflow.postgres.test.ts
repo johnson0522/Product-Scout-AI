@@ -1,3 +1,4 @@
+import { DrizzleResearchQualitySnapshotRepository } from '@product-scout/db';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { AgentJsonValue, AgentRuntimeReasoner } from '@product-scout/agent-sdk';
@@ -58,6 +59,7 @@ if (!authorized) console.warn('BLOCKED: full workflow PostgreSQL test needs the 
     const runs = new DrizzleResearchRunRepository(db);
     const acquisitions = new DrizzleEvidenceAcquisitionRepository(db);
     const evidence = new DrizzleEvidenceStoreRepository(db);
+    const quality = new DrizzleResearchQualitySnapshotRepository(db);
     const claims = new DrizzleClaimRepository(db);
     const findings = new DrizzleResearchFindingRepository(db);
     const opportunities = new DrizzleOpportunityRepository(db);
@@ -80,7 +82,7 @@ if (!authorized) console.warn('BLOCKED: full workflow PostgreSQL test needs the 
       } }), {
         fetch: async ({ url }) => ({ url, text: 'Teams report recurring manual reconciliation work.', retrievedAt: new Date() }),
       }, new DrizzleSourceRepository(db)),
-      evidenceRepository: evidence, evidenceAcquisitionRepository: acquisitions, claimRepository: claims,
+      qualityStore: quality, evidenceRepository: evidence, evidenceAcquisitionRepository: acquisitions, claimRepository: claims,
       findingRepository: findings, opportunityStore: opportunities, reportStore: reports, validationPlanStore: plans,
       evidenceIdGenerator: { generate: () => `${prefix}-${++sequence}` }, workflowTimeoutMs: 20_000,
       reasoner: reasoner(async () => {
@@ -101,7 +103,7 @@ if (!authorized) console.warn('BLOCKED: full workflow PostgreSQL test needs the 
     });
     const liveEventPublisher = new InMemoryLiveEventPublisher();
     const gateway = new DefaultAgentGateway(runs, factory, { eventStore: events, liveEventPublisher, stepStore: new DrizzleResearchStepRepository(db) });
-    const api = new ProductApi({ projects, runs, acquisitions, evidence, claims, findings, opportunities, reports, validationPlans: plans }, ownerId);
+    const api = new ProductApi({ projects, runs, acquisitions, evidence, claims, findings, quality, opportunities, reports, validationPlans: plans }, ownerId);
     httpPorts.api = api;
     httpPorts.dependencies = { gateway, runs, eventStore: events, liveEventPublisher };
     const created = await createProject(new Request('http://localhost/api/projects', {
@@ -127,6 +129,12 @@ if (!authorized) console.warn('BLOCKED: full workflow PostgreSQL test needs the 
     expect(trace.evidence).toHaveLength(4);
     expect(trace.claims).toHaveLength(1);
     expect(trace.findings).toHaveLength(1);
+    expect(trace.qualityAssessments).toHaveLength(1);
+    expect(trace.qualityAssessments[0]).toMatchObject({
+      researchRunId: runId, rulesVersion: 'rqc-v1',
+      assessment: { status: 'sufficient', requiresHumanReview: false, issues: [] },
+    });
+    expect(trace.qualityAssessments[0]?.inputs).toHaveLength(4);
     expect(trace.claims[0]?.evidenceRefs.map((ref) => ref.evidenceId).sort()).toEqual(trace.evidence.map((item) => item.id).sort());
     const storedOpportunities = await opportunities.listByResearchRunId(runId);
     expect(storedOpportunities[0]?.score.total).toBe(70);

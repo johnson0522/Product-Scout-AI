@@ -1,3 +1,4 @@
+import { qualitySnapshotFixture } from '../fixtures/research-quality';
 import { expect, test, type Page } from '@playwright/test';
 
 const projectId = '20000000-0000-4000-8000-000000000002';
@@ -19,7 +20,7 @@ async function mockApi(page: Page, status: 'completed' | 'running' = 'completed'
     if (url.pathname === `/api/projects/${projectId}`) { await route.fulfill({ json: { project, runs: [] } }); return; }
     if (url.pathname === '/api/research') { await route.fulfill({ status: 201, json: { researchRunId: runId } }); return; }
     if (url.pathname === `/api/research/${runId}`) { await route.fulfill({ json: { researchRun: run() } }); return; }
-    if (url.pathname.endsWith('/evidence')) { await route.fulfill({ json: { acquisitions: [], evidence: [{ id: 'e1', title: 'Original customer source', excerpt: '<script>window.injected = true</script> Users report repeated reconciliation work.', source: { url: 'https://example.com/original' }, retrievedAt: '2026-11-16T00:00:00.000Z' }], claims: [{ id: 'c1', text: 'Recurring work is reported', evidenceRefs: [{ evidenceId: 'e1' }] }], findings: [{ id: 'f1', title: 'Recurring reconciliation', description: 'Repeated work appears in independent sources.', claimIds: ['c1'] }] } }); return; }
+    if (url.pathname.endsWith('/evidence')) { await route.fulfill({ json: { qualityAssessments: [qualitySnapshotFixture()], acquisitions: [], evidence: [{ id: 'e1', title: 'Original customer source', excerpt: '<script>window.injected = true</script> Users report repeated reconciliation work.', source: { url: 'https://example.com/original' }, retrievedAt: '2026-11-16T00:00:00.000Z' }], claims: [{ id: 'c1', text: 'Recurring work is reported', evidenceRefs: [{ evidenceId: 'e1' }] }], findings: [{ id: 'f1', title: 'Recurring reconciliation', description: 'Repeated work appears in independent sources.', claimIds: ['c1'] }] } }); return; }
     if (url.pathname.endsWith('/report')) {
       await route.fulfill({ json: {
         reports: state === 'completed' ? [{ id: 'r1', title: 'Operations report', executiveSummary: 'A focused reconciliation workflow merits validation.', sections: [{ id: 'summary', title: 'Market findings', content: 'Evidence supports a narrow test.', findingIds: ['f1'], opportunityIds: [] }], limitations: ['No willingness-to-pay interview.'] }] : [],
@@ -40,15 +41,22 @@ test('create project, start research, inspect report, plan and evidence trace', 
   await page.getByRole('button', { name: 'Start research', exact: true }).click();
   await expect(page).toHaveURL(`/research/${runId}`);
   await expect(page.getByRole('heading', { name: 'Operations report' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Research quality' })).toBeVisible();
+  await expect(page.getByText('Needs review', { exact: true })).toBeVisible();
+  await page.getByText('Recurring work is reported — Needs review', { exact: true }).click();
+  await expect(page.getByText('RQC-003 · SINGLE_SUPPORTING_SOURCE', { exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'View Claim', exact: true })).toHaveAttribute('href', '#claim-c1');
+  await page.getByText('Evidence classifications used', { exact: true }).click();
+  await expect(page.getByText('supports · user_report · community', { exact: false })).toBeVisible();
   await expect(page.getByText('Day 7 · Validation objective 7')).toBeVisible();
   await expect(page.getByText('70/100', { exact: true })).toBeVisible();
   await expect(page.getByRole('cell', { name: 'An evidence-backed factor explanation.', exact: true })).toHaveCount(7);
   await expect(page.getByText('Import and compare', { exact: true })).toBeVisible();
-  await page.getByRole('link', { name: '1', exact: true }).first().click();
-  await expect(page.getByRole('heading', { name: 'Recurring reconciliation' })).toBeVisible();
+  await page.locator('a[href="#finding-f1"]').filter({ hasText: /^1$/ }).click();
+  await expect(page.locator('#finding-f1').getByRole('heading', { name: 'Recurring reconciliation' })).toBeVisible();
   await expect(page.getByText('<script>window.injected = true</script>', { exact: false })).toBeVisible();
   expect(await page.evaluate(() => Object.prototype.hasOwnProperty.call(window, 'injected'))).toBe(false);
-  await expect(page.getByRole('link', { name: 'https://example.com/original' })).toHaveAttribute('rel', 'noopener noreferrer');
+  await expect(page.locator('#evidence-e1').getByRole('link', { name: 'https://example.com/original' })).toHaveAttribute('rel', 'noopener noreferrer');
 });
 
 test('shows live activity and can cancel an active research run', async ({ page }) => {
@@ -89,4 +97,12 @@ test('loads the actual production API bundle and fails closed without configurat
     headers: { Origin: 'https://attacker.example' }, data: { name: 'Untrusted request' },
   });
   expect(crossOrigin.status()).toBe(403);
+});
+
+test('shows missing historical quality as unrecorded rather than approved', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/api/research/*/evidence', (route) => route.fulfill({ json: { acquisitions: [], evidence: [], claims: [], findings: [{ id: 'old-finding', title: 'Historical finding', description: 'Before quality persistence', claimIds: [] }], qualityAssessments: [] } }));
+  await page.goto(`/research/${runId}`);
+  await expect(page.getByText('No saved quality assessment exists', { exact: false })).toBeVisible();
+  await expect(page.getByText('Sufficient', { exact: true })).toHaveCount(0);
 });

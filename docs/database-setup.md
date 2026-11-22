@@ -52,7 +52,7 @@ node --env-file=.env packages/db/scripts/migrate.mjs
 ```
 
 该脚本从进程环境读取 `DATABASE_URL`，通过 Drizzle migrator 按顺序执行
-`packages/db/drizzle/` 下的现有迁移（当前为 0000–0007），并记录到
+`packages/db/drizzle/` 下的现有迁移（当前为 0000–0008），并记录到
 `drizzle.__drizzle_migrations`。重复执行会跳过已记录的迁移。
 `--env-file` 显式加载根目录 `.env`；如果当前 shell 已设置同名环境变量，
 该变量优先，请确认它指向预期数据库。

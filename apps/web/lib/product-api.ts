@@ -1,5 +1,5 @@
 import type { Finding, Opportunity, Project, ResearchReport, ResearchRun, ValidationPlan } from '@product-scout/domain';
-import type { Claim, Evidence, EvidenceAcquisition } from '@product-scout/evidence';
+import type { Claim, Evidence, EvidenceAcquisition, ResearchQualitySnapshotRepository } from '@product-scout/evidence';
 import type { AgentGateway } from '@product-scout/research';
 
 export interface ProductData {
@@ -16,6 +16,7 @@ export interface ProductData {
   readonly evidence: { getById(id: string): Promise<Evidence | null> };
   readonly claims: { listByResearchRunId(id: string): Promise<readonly Claim[]> };
   readonly findings: { listByResearchRunId(id: string): Promise<readonly Finding[]> };
+  readonly quality: Pick<ResearchQualitySnapshotRepository, 'listByResearchRunId'>;
   readonly opportunities: { listByResearchRunId(id: string): Promise<readonly Opportunity[]> };
   readonly reports: { listByResearchRunId(id: string): Promise<readonly ResearchReport[]> };
   readonly validationPlans: { listByResearchRunId(id: string): Promise<readonly ValidationPlan[]> };
@@ -89,10 +90,11 @@ export class ProductApi {
       if (item === null) throw new Error('Acquired Evidence is missing');
       return item;
     }));
-    const [claims, findings] = await Promise.all([
+    const [claims, findings, qualityAssessments] = await Promise.all([
       this.data.claims.listByResearchRunId(id), this.data.findings.listByResearchRunId(id),
+      this.data.quality.listByResearchRunId(id),
     ]);
-    return { evidence, acquisitions, claims, findings };
+    return { evidence, acquisitions, claims, findings, qualityAssessments };
   }
 
   public scopedGateway(gateway: AgentGateway): AgentGateway {

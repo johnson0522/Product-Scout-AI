@@ -1,3 +1,4 @@
+import { DrizzleResearchQualitySnapshotRepository } from '@product-scout/db';
 import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -91,6 +92,7 @@ describeIntegration('ResearchWorkflowAnalysisHandler with PostgreSQL repositorie
         }),
       },
       findingService,
+      qualityStore: new DrizzleResearchQualitySnapshotRepository(database.db),
       qualityService: new ResearchQualityAssessmentService(findingService),
       opportunityPlanProvider: { createPlan: async () => ({ opportunities: [] }) },
       opportunityStore: {

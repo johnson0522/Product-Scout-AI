@@ -52,6 +52,8 @@ describe('production Agent Gateway composition', () => {
       .toBe('DrizzleOpportunityRepository');
     expect(capturedDependencies?.reportStore.constructor.name)
       .toBe('DrizzleResearchReportRepository');
+    expect(capturedDependencies?.qualityStore.constructor.name)
+      .toBe('DrizzleResearchQualitySnapshotRepository');
     expect(capturedDependencies?.validationPlanStore.constructor.name)
       .toBe('DrizzleValidationPlanRepository');
     expect(capturedOptions).toMatchObject({

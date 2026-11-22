@@ -4,6 +4,7 @@ import type {
   EvidenceAcquisitionRepository,
   EvidenceRepository,
   ResearchFindingRepository,
+  ResearchQualitySnapshotRepository,
 } from '@product-scout/evidence';
 import {
   InMemoryResearchWorkflowCoordinator,
@@ -48,6 +49,7 @@ export interface AnalysisWorkflowRuntimeDependencies {
   readonly evidenceAcquisitionRepository: EvidenceAcquisitionRepository;
   readonly claimRepository: ClaimRepository;
   readonly findingRepository: ResearchFindingRepository;
+  readonly qualityStore: ResearchQualitySnapshotRepository;
   readonly opportunityStore: OpportunityStore;
   readonly evidenceIdGenerator?: EvidenceIdGenerator;
   readonly now?: () => Date;
@@ -142,6 +144,7 @@ function createWorkflowRuntimeFactory(
         planProvider,
         findingService,
         qualityService,
+        qualityStore: dependencies.qualityStore,
         opportunityPlanProvider,
         opportunityStore: dependencies.opportunityStore,
         ...(dependencies.now === undefined ? {} : { now: dependencies.now }),

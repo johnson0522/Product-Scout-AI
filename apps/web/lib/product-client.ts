@@ -1,3 +1,6 @@
+import { createResearchQualitySnapshot } from '@product-scout/evidence/research-quality-validation';
+import type { ResearchQualitySnapshot } from '@product-scout/evidence/research-quality-model';
+
 /** JSON is validated at the browser boundary, never cast to a domain object. */
 export function object(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Invalid service response');
@@ -16,6 +19,17 @@ export function list(value: unknown): readonly unknown[] {
   return value;
 }
 export function records(value: unknown): readonly Record<string, unknown>[] { return list(value).map(object); }
+
+export function qualitySnapshots(value: unknown): readonly ResearchQualitySnapshot[] {
+  return list(value).map((item) => {
+    const row = object(item);
+    return createResearchQualitySnapshot({ ...row, assessedAt: new Date(text(row.assessedAt)) });
+  });
+}
+export function safeSource(value: string): string | null {
+  try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : null; }
+  catch { return null; }
+}
 
 export async function requestJson(url: string, body?: unknown): Promise<Record<string, unknown>> {
   const response = await fetch(url, {

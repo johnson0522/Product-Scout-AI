@@ -819,3 +819,15 @@ submission contracts share this path; Product, Gateway and `AgentRuntimeReasoner
 interfaces remain runtime-neutral. Child launch/home `.env` layers are refused,
 and SDK idle is accepted only in the absence of a failed turn settlement.
 See ADR-013 and `yunqiao-runtime-provider.md` for limits and executed checks.
+
+### Versioned Finding quality diagnostics
+
+Finding quality is now persisted as a business snapshot containing explicit
+classification inputs and the deterministic `rqc-v1` assessment. Data-only
+types/Repository live in `packages/evidence`; evaluation remains in
+`packages/research`, and Drizzle implements the port in `packages/db`.
+The workflow awaits snapshot persistence before accepting quality artifacts.
+The existing owner-scoped Evidence API and Research workspace expose the
+diagnostics without consulting DSH state. Historical missing snapshots are
+shown as unrecorded. Rules and report approval remain unchanged. See ADR-014
+and `research-quality-diagnostics.md` for migration and rule-scope review.

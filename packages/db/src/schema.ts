@@ -1,4 +1,5 @@
 import { relations, sql } from 'drizzle-orm';
+import type { ClaimEvidenceAssessmentInput, ResearchQualityAssessment } from '@product-scout/evidence';
 import type {
   OpportunityScoreBreakdown,
   OpportunityScoreReasoning,
@@ -201,6 +202,15 @@ export const researchFindingClaims = pgTable('research_finding_claims', {
   positionUnique: uniqueIndex('research_finding_claims_finding_position_idx')
     .on(table.findingId, table.position),
 }));
+
+export const researchQualitySnapshots = pgTable('research_quality_snapshots', {
+  findingId: text('finding_id').notNull().references(() => researchFindings.id, { onDelete: 'cascade' }),
+  workflowInvocationKey: text('workflow_invocation_key').notNull(),
+  rulesVersion: text('rules_version').notNull(),
+  assessedAt: timestamp('assessed_at', { withTimezone: true }).notNull(),
+  inputs: jsonb('inputs').$type<readonly ClaimEvidenceAssessmentInput[]>().notNull(),
+  assessment: jsonb('assessment').$type<ResearchQualityAssessment>().notNull(),
+}, (table) => ({ primaryKey: primaryKey(table.findingId, table.workflowInvocationKey, table.rulesVersion) }));
 
 export const opportunities = pgTable('opportunities', {
   id: uuid('id').defaultRandom().primaryKey(),
