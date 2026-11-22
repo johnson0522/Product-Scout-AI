@@ -1,0 +1,30 @@
+# Same-version official provider extension; only enabled by DSH_PROVIDER=yunqiao.
+- id: llm-deepseek
+  disabled: true
+
+# Avoid a separate title-generation model request for each short-lived reasoner.
+- id: session-title
+  disabled: true
+
+- insert:
+    - id: product-scout-yunqiao-responses
+      name: '@deepseek-ai/dsh-llm-pi-ai'
+      config:
+        providers:
+          yunqiao:
+            displayName: Yunqiao GPT Responses
+            apiKeyEnv: LLM_API_KEY
+            api: openai-responses
+            baseURL: https://api.yunqiao.me/v1
+            transport: sse
+            timeoutMs: 60000
+            streamIdleTimeoutMs: 30000
+            retryPolicy:
+              mode: normal
+              maxRetries: 0
+            models:
+              - id: gpt-6.1-sol
+                # Conservative application limits, not claimed model capabilities.
+                contextWindow: 32768
+                maxTokens: 8192
+                input: [text]

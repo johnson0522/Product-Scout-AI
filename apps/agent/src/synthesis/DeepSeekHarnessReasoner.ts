@@ -1,4 +1,7 @@
 import { DeepSeekHarness } from '@deepseek-ai/dsh-sdk-client';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { selectDshProvider, YUNQIAO_PROVIDER } from './provider';
 import type {
   AgentEvent,
   AgentJsonValue,
@@ -31,11 +34,16 @@ const SYNTHESIS_CHILD_ENV_KEYS = [
 /** Builds the complete child environment from an explicit credential/runtime allowlist. */
 export function createSynthesisChildEnvironment(
   source: Readonly<Record<string, string | undefined>>,
+  provider?: string,
 ): DshChildEnvironment {
   const allowed: Record<string, string | undefined> = {};
   for (const key of SYNTHESIS_CHILD_ENV_KEYS) {
+    if (provider === YUNQIAO_PROVIDER && key === 'DEEPSEEK_API_KEY') continue;
     const value = source[key];
     if (value !== undefined) allowed[key] = value;
+  }
+  if (provider === YUNQIAO_PROVIDER && source.LLM_API_KEY !== undefined) {
+    allowed.LLM_API_KEY = source.LLM_API_KEY;
   }
   return { ...allowed, NODE_ENV: nodeEnvironment(source.NODE_ENV) };
 }
@@ -95,6 +103,13 @@ export class AgentReasoningCancelledError extends Error {
   }
 }
 
+export class AgentReasoningRuntimeError extends Error {
+  public constructor(public readonly code: string) {
+    super(`DSH reasoning did not complete successfully: ${code}`);
+    this.name = 'AgentReasoningRuntimeError';
+  }
+}
+
 interface OwnedReasoningHarness {
   readonly harness: ReasoningHarness;
   closePromise?: Promise<void>;
@@ -122,9 +137,16 @@ export class DeepSeekHarnessReasoner implements AgentRuntimeReasoner {
       cancelled: false,
     };
     this.active.set(input.requestId, owned);
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
-      const result = await owned.harness.run(input.prompt);
+      // SDK requestTimeoutMs covers RPC requests, not the subsequent wait for
+      // session idle. Bound the whole operation, including a model/tool loop.
+      const timeout = new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(() => reject(new AgentReasoningRuntimeError('DSH_TIMEOUT')), this.timeoutMs);
+      });
+      const result = await Promise.race([owned.harness.run(input.prompt), timeout]);
       if (owned.cancelled) throw new AgentReasoningCancelledError(input.requestId);
+      assertSuccessfulReasoningTurn(result.events);
       const toolName = this.options.submissionToolName ?? SYNTHESIS_TOOL_NAME;
       const submission = extractStructuredSubmission(result.events, toolName);
       return {
@@ -134,6 +156,7 @@ export class DeepSeekHarnessReasoner implements AgentRuntimeReasoner {
         events: mapSubmissionEvents(result.sessionId, submission, toolName),
       };
     } finally {
+      clearTimeout(deadline);
       this.active.delete(input.requestId);
       await closeOwnedHarness(owned);
     }
@@ -147,20 +170,46 @@ export class DeepSeekHarnessReasoner implements AgentRuntimeReasoner {
   }
 
   private createHarness(): ReasoningHarness {
+    const selection = selectDshProvider(
+      this.options.processCwd, this.options.env, this.options.provider, this.options.model,
+    );
+    // DSH loads cwd/.env again, outside the supplied environment allowlist.
+    // Keep its actual process away from the Product .env; cwd below still records
+    // the Product workspace on the SDK session. Refuse implicit child env layers.
+    const processCwd = resolve(this.options.processCwd, 'apps/agent/src/dsh');
+    for (const directory of [processCwd, this.options.dshHome]) {
+      if (existsSync(resolve(directory, '.env'))) {
+        throw new Error('DSH launch/home directories must not contain a .env file');
+      }
+    }
     const harnessOptions: DeepSeekHarnessReasonerHarnessOptions = {
       profile: 'sdk-minimal',
-      patches: [this.options.patchFile],
+      patches: [...selection.patches, this.options.patchFile],
       cwd: this.options.processCwd,
-      processCwd: this.options.processCwd,
+      processCwd,
       dshHome: this.options.dshHome,
-      env: createSynthesisChildEnvironment(this.options.env),
+      env: createSynthesisChildEnvironment(this.options.env, selection.provider),
       initializeTimeoutMs: Math.min(this.timeoutMs, 60_000),
       requestTimeoutMs: this.timeoutMs,
-      ...(this.options.provider === undefined ? {} : { provider: this.options.provider }),
-      ...(this.options.model === undefined ? {} : { model: this.options.model }),
+      ...(selection.provider === undefined ? {} : { provider: selection.provider }),
+      ...(selection.model === undefined ? {} : { model: selection.model }),
     };
     return this.options.createHarness?.(harnessOptions)
       ?? new DeepSeekHarness(harnessOptions);
+  }
+}
+
+/** SDK run() settles on idle even when the model turn failed. Never accept that as success. */
+function assertSuccessfulReasoningTurn(events: readonly unknown[]): void {
+  for (const candidate of events) {
+    const event = eventRecord(candidate);
+    if (event?.type !== 'turn/end') continue;
+    const reason = recordField(event.data, 'reason');
+    if (reason?.kind === 'completed') continue;
+    const code = stringField(recordField(reason ?? {}, 'error'), 'code');
+    throw new AgentReasoningRuntimeError(
+      code !== undefined && /^[A-Z0-9_]{1,64}$/u.test(code) ? code : 'DSH_TURN_FAILED',
+    );
   }
 }
 

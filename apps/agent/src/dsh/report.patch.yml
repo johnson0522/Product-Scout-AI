@@ -9,4 +9,4 @@
 
 - insert:
     - id: product-scout-submit-report-tool
-      name: './apps/agent/src/dsh/submit-report-tool.mjs'
+      name: './submit-report-tool.mjs'

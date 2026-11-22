@@ -178,6 +178,14 @@ Tool 错误或非法 JSON 都是显式失败。
 本阶段默认测试注入 Fake Reasoner 或 Fake Harness，不需要 API key。真实模型
 验证属于独立 smoke test；未配置 `DEEPSEEK_API_KEY` 时必须报告 BLOCKED。
 
+## 13. Yunqiao GPT Provider
+
+固定版本包含官方 `dsh-llm-pi-ai` Provider 扩展，支持自定义
+`openai-responses` 路由。当前 `DeepSeekHarnessReasoner` 可显式选择 `yunqiao`
+并传递 `LLM_API_KEY`，默认官方 DeepSeek 路由仍使用 `DEEPSEEK_API_KEY`。
+现有 PoC 不变。版本来源、隔离策略、真实 DSH 检查和配置说明见
+[Yunqiao Runtime Provider](yunqiao-runtime-provider.md) 与 ADR-013。
+
 ## 官方依据
 
 - [官方仓库 README（固定提交）](https://github.com/deepseek-ai/deepseek-harness/blob/5badb15009ae1756c3afe0ae0cef1faafc290ccc/README.md)

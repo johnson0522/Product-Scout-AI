@@ -9,4 +9,4 @@
 
 - insert:
     - id: product-scout-submit-synthesis-tool
-      name: './apps/agent/src/dsh/submit-synthesis-tool.mjs'
+      name: './submit-synthesis-tool.mjs'

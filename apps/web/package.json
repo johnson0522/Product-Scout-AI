@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node --env-file=../../.env node_modules/next/dist/bin/next dev --hostname 127.0.0.1",
+    "dev": "node ../../scripts/run-web.mjs dev",
     "build": "next build",
-    "start": "node --env-file=../../.env node_modules/next/dist/bin/next start --hostname 127.0.0.1",
+    "start": "node ../../scripts/run-web.mjs start",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",

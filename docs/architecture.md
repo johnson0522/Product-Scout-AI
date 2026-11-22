@@ -808,3 +808,14 @@ workspace, not a validated standalone-container deployment.
 
 See `v0.1-acceptance.md` for current executed checks. Historical phase-status
 sections above describe their respective milestones, not current remaining work.
+
+### Yunqiao GPT Runtime Provider
+
+The explicit `yunqiao` DSH route uses the same-version official
+`dsh-llm-pi-ai` extension with `openai-responses` for `gpt-6.1-sol`.
+`DeepSeekHarnessReasoner` selects and validates the Provider patch and passes
+only the selected credential to the child. All four operation-specific
+submission contracts share this path; Product, Gateway and `AgentRuntimeReasoner`
+interfaces remain runtime-neutral. Child launch/home `.env` layers are refused,
+and SDK idle is accepted only in the absence of a failed turn settlement.
+See ADR-013 and `yunqiao-runtime-provider.md` for limits and executed checks.

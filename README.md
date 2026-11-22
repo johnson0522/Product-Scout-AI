@@ -165,9 +165,10 @@ Copy:
 ```Bash
 cp .env.example .env
 ```
-Configure `DATABASE_URL`, `PRODUCT_SCOUT_OWNER_ID`, `DSH_HOME`,
-`DEEPSEEK_API_KEY`, and the selected Search provider before starting research.
-The generic `LLM_API_KEY` setting is not forwarded to the isolated DSH runtime.
+Configure `DATABASE_URL`, `PRODUCT_SCOUT_OWNER_ID`, `DSH_HOME`, the selected
+model credential, and the Search provider before starting research.
+The default DSH route uses `DEEPSEEK_API_KEY`. The explicit `yunqiao` route uses
+`LLM_API_KEY` instead; credentials are isolated per route.
 
 ### Local workspace startup
 
@@ -296,6 +297,30 @@ The fixed workflow requires four Search calls. `AGENT_MAX_SEARCHES` and
 `AGENT_MAX_SOURCES` must each be at least four; invalid values fail at
 composition time. `AGENT_TIMEOUT_MS` bounds the complete workflow and each
 individual DSH reasoning operation.
+
+For a Yunqiao GPT-only plan, replace the model settings above with:
+
+```dotenv
+DSH_PROVIDER=yunqiao
+DSH_MODEL=gpt-6.1-sol
+LLM_BASE_URL=https://api.yunqiao.me/v1
+LLM_API_KEY=your-yunqiao-key
+```
+
+This route uses the pinned DSH's official `dsh-llm-pi-ai` extension with
+`openai-responses`; no separate DSH installation or version upgrade is needed.
+It currently allows only the tested endpoint/model. `LLM_PROVIDER` does not
+select the Runtime route. Restart the application after changing `.env`.
+
+Run the real DSH Provider check before starting a full research job:
+
+```powershell
+pnpm --filter @product-scout/agent dsh:smoke
+```
+
+It performs a harmless addition/receipt roundtrip and submits an empty synthesis
+test contract through the production adapter. It uses model quota but does not
+write business data. See [Provider setup and validation](docs/yunqiao-runtime-provider.md).
 
 Production collects at most five results per research step (twenty overall),
 further reduced by `AGENT_MAX_SOURCES`. This leaves room for bounded page

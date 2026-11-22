@@ -11,7 +11,7 @@
     "test": "turbo test",
     "typecheck": "turbo typecheck",
     "test:e2e": "playwright test",
-    "db:seed-owner": "pnpm --filter @product-scout/db exec node --env-file=../../.env scripts/seed-owner.mjs",
+    "db:seed-owner": "node --env-file=.env packages/db/scripts/seed-owner.mjs",
     "clean": "turbo clean",
     "db:generate": "pnpm --filter @product-scout/db generate",
     "db:push": "pnpm --filter @product-scout/db push",

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { NextRequest } from 'next/server';
 import type { Project, ResearchRun } from '@product-scout/domain';
 import { ProductApi, apiRoute, readObject, requireLocalRequest, type ProductData } from '../lib/product-api';
 
@@ -62,5 +63,48 @@ describe('local Product API authorization and errors', () => {
     new Request('http://localhost/api/projects', { headers: { 'Sec-Fetch-Site': 'cross-site' } }),
   ])('rejects remote or cross-site requests', (request) => {
     expect(() => requireLocalRequest(request)).toThrow();
+  });
+  it.each(['127.0.0.1:3000', 'localhost:3000', '[::1]:3000'])(
+    'accepts the browser origin for %s after NextURL normalization', (host) => {
+      const request = new NextRequest(`http://${host}/api/projects`, {
+        method: 'POST',
+        headers: { Host: host, Origin: `http://${host}`, 'Sec-Fetch-Site': 'same-origin' },
+      });
+      expect(new URL(request.url).hostname).toBe('localhost');
+      expect(() => requireLocalRequest(request)).not.toThrow();
+    },
+  );
+  it.each<Record<string, string>>([
+    { Host: '127.0.0.1:3000', Origin: 'http://localhost:3000' },
+    { Host: '127.0.0.1:3000', Origin: 'http://127.0.0.1:3001' },
+    { Host: '127.0.0.1:3000', Origin: 'https://127.0.0.1:3000' },
+    { Host: '127.0.0.1:3000', Origin: 'https://attacker.example' },
+    { Host: '127.0.0.1:3000', Origin: 'null' },
+    { Host: '127.0.0.1:3000', Origin: 'http://127.0.0.1:3000', 'Sec-Fetch-Site': 'cross-site' },
+    { Host: 'attacker.example', Origin: 'http://attacker.example' },
+    { Host: 'localhost.attacker.example', Origin: 'http://localhost.attacker.example' },
+    { Host: 'localhost:99999' },
+    { Host: 'localhost:3000@attacker.example' },
+    { Host: 'localhost:3000/path' },
+    { Host: '127.0.0.1:3000', Origin: 'https://attacker.example', 'X-Forwarded-Host': 'attacker.example', 'X-Forwarded-Proto': 'https' },
+  ])('rejects a mismatched origin or invalid host: %j', (headers) => {
+    const request = new NextRequest('http://127.0.0.1:3000/api/projects', { headers });
+    expect(() => requireLocalRequest(request)).toThrow();
+  });
+  it('allows project creation through the route boundary with a normalized NextRequest', async () => {
+    const { api, project } = fixture();
+    const create = vi.spyOn(api.data.projects, 'create');
+    const route = apiRoute(() => api, async (product, request) => {
+      const body = await readObject(request);
+      return Response.json({ project: await product.data.projects.create({ ownerId: owner, name: String(body.name) }) }, { status: 201 });
+    });
+    const response = await route(new NextRequest('http://127.0.0.1:3000/api/projects', {
+      method: 'POST',
+      headers: { Host: '127.0.0.1:3000', Origin: 'http://127.0.0.1:3000', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Project' }),
+    }), undefined);
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual({ project: JSON.parse(JSON.stringify(project)) });
+    expect(create).toHaveBeenCalledWith({ ownerId: owner, name: 'Project' });
   });
 });

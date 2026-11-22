@@ -42,8 +42,23 @@ export function requireLocalRequest(request: Request): void {
   if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
     throw new ApiError(403, 'V0.1 requires a local connection');
   }
+  // NextURL normalizes loopback addresses to localhost. Host retains the
+  // browser-facing authority; validate it before comparing the exact origin.
+  // Forwarded headers are deliberately not trusted in this local-only app.
+  const host = request.headers.get('host');
+  let expectedOrigin = url.origin;
+  if (host !== null) {
+    if (!/^(localhost|127\.0\.0\.1|\[::1\])(?::[0-9]{1,5})?$/i.test(host)) {
+      throw new ApiError(403, 'V0.1 requires a local connection');
+    }
+    try {
+      expectedOrigin = new URL(`${url.protocol}//${host}`).origin;
+    } catch {
+      throw new ApiError(403, 'Invalid local host');
+    }
+  }
   const origin = request.headers.get('origin');
-  if (origin !== null && origin !== url.origin) throw new ApiError(403, 'Cross-origin request rejected');
+  if (origin !== null && origin !== expectedOrigin) throw new ApiError(403, 'Cross-origin request rejected');
   if (request.headers.get('sec-fetch-site') === 'cross-site') throw new ApiError(403, 'Cross-site request rejected');
 }
 

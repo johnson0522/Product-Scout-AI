@@ -9,4 +9,4 @@
 
 - insert:
     - id: product-scout-submit-opportunities-tool
-      name: './apps/agent/src/dsh/submit-opportunities-tool.mjs'
+      name: './submit-opportunities-tool.mjs'

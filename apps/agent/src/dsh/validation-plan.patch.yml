@@ -9,4 +9,4 @@
 
 - insert:
     - id: product-scout-submit-validation-plan-tool
-      name: './apps/agent/src/dsh/submit-validation-plan-tool.mjs'
+      name: './submit-validation-plan-tool.mjs'

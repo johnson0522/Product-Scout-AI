@@ -1,0 +1,12 @@
+- id: persistent-bash
+  disabled: true
+
+- id: persistent-pwsh
+  disabled: true
+
+- id: mcp-resources
+  disabled: true
+
+- insert:
+    - id: product-scout-provider-probe-tools
+      name: './provider-probe-tools.mjs'

@@ -72,6 +72,20 @@ docker compose -f docker/docker-compose.yml exec db psql -h 127.0.0.1 -U postgre
 才能同时确认 `.env` 的认证和宿主机端口映射可用。迁移不创建演示用户或项目数据。
 应用同样需要将 `DATABASE_URL` 加载到其服务端进程环境中。
 
+迁移完成后还需初始化本地工作区用户：将根目录 `.env` 中的
+`PRODUCT_SCOUT_OWNER_ID` 设置为 UUID，然后在仓库根目录执行：
+
+```powershell
+pnpm db:seed-owner
+```
+
+此命令使用当前 `DATABASE_URL`，仅插入指定的本地用户；重复执行不会覆盖
+已有用户。更换数据库或 `PRODUCT_SCOUT_OWNER_ID` 后，应再次执行。
+Web 服务不会自动创建用户。只配置 UUID 而未初始化用户时，项目列表可能
+正常返回空数组，但创建项目会触发 `projects_owner_id_users_id_fk` 外键约束，
+页面显示 `Service unavailable`。生产构建的异常类名可能被压缩（例如 `d`），
+不能仅凭类名诊断。初始化完成后无需重新构建或重启 Web，刷新页面即可重试。
+
 停止数据库并保留数据：
 
 ```powershell
@@ -100,3 +114,56 @@ createdb -h localhost -p 5432 -U postgres -W product_scout
 集成测试使用 `127.0.0.1:55432/product_scout_test`，与开发数据库隔离。
 启动、迁移及测试命令见 [PostgreSQL 集成测试](postgres-integration.md)。
 不要将集成测试指向开发数据库。
+
+## 7. Web 已 Ready 但 Product API 返回 AggregateError
+
+Web 启动成功不代表 PostgreSQL 可用。若数据库容器已停止，访问
+`localhost:5433` 可能同时对 `::1` 和 `127.0.0.1` 返回 `ECONNREFUSED`，
+Node 将两个连接错误合为 `AggregateError`。先检查现有容器，不要删卷或重建数据库：
+
+```powershell
+docker ps -a --filter name=product-scout-db
+docker start product-scout-db
+docker exec product-scout-db pg_isready -U postgres -d product_scout
+```
+
+如果 `docker start` 报 `network ... not found`，先检查容器实际使用的网络及数据卷：
+
+```powershell
+docker inspect product-scout-db --format '{{json .NetworkSettings.Networks}} {{json .Mounts}}'
+docker network ls
+```
+
+只有确认该容器原本使用 `docker_default`、且这个网络已不存在时，才恢复同名网络，
+移除容器的失效网络引用并重新连接。以下操作保留容器及其原数据卷：
+
+```powershell
+docker network create --driver bridge --label com.docker.compose.project=docker --label com.docker.compose.network=default docker_default
+docker network disconnect --force docker_default product-scout-db
+docker network connect --alias db --alias product-scout-db docker_default product-scout-db
+docker start product-scout-db
+docker exec product-scout-db pg_isready -U postgres -d product_scout
+```
+
+如果网络名称或故障不同，应先诊断，不要直接套用这些恢复命令。
+
+容器恢复且配置正确时，刷新页面即可重试。应用响应仍隐藏数据库细节；
+API 返回 `Service unavailable` 也可能有其他原因，不能把所有此类错误
+都判定为数据库未启动。新环境的建库和 migration 请按前文执行。
+
+`pnpm --filter @product-scout/web dev` 显式使用 `NODE_ENV=development`，
+`start` 显式使用 `NODE_ENV=production`；两者通过跨平台启动脚本加载
+根目录 `.env`，并继续绑定 `127.0.0.1`。无需为了切换命令反复修改
+共享 `.env`。`start` 使用已有构建；更新应用源码后先运行 `pnpm build`。
+
+## 8. 创建项目时提示 Cross-origin request rejected
+
+浏览器的 Origin 必须与实际访问地址的协议、主机和端口完全一致。
+Next.js 14.1 的 NextURL 会将本机回环地址规范化为 `localhost`，因此
+API 使用经过本机地址白名单校验的 Host 头还原浏览器访问的 origin，
+避免从 `http://127.0.0.1:3000` 提交表单时被误拒绝。
+应用不信任 `X-Forwarded-Host` / `X-Forwarded-Proto`，也不会把
+`localhost` 与 `127.0.0.1` 作为可互换的浏览器来源放行。
+
+修复源码后需要重新构建并重启 `start` 服务；只刷新仍运行旧构建的服务不会生效。
+无需修改 `NEXT_PUBLIC_APP_URL` 或关闭跨站请求校验。

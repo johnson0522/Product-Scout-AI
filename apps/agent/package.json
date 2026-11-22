@@ -17,6 +17,8 @@
     "start": "node dist/index.js",
     "poc": "tsx src/index.ts",
     "search:smoke": "tsx --env-file=../../.env src/search/smoke.ts",
+    "llm:smoke": "tsx --env-file=../../.env src/diagnostics/yunqiao-smoke.ts",
+    "dsh:smoke": "tsx --env-file=../../.env src/diagnostics/dsh-provider-smoke.ts",
     "lint": "eslint src --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"

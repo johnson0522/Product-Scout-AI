@@ -73,6 +73,18 @@ test('loads the actual production API bundle and fails closed without configurat
   const response = await request.get('/api/projects');
   expect(response.status()).toBe(503);
   expect(await response.json()).toEqual({ error: 'Service unavailable' });
+  // Exercise the real origin guard with a browser-style POST, not an HTTP
+  // fixture. Missing DB configuration must be reached after origin validation.
+  const sameOrigin = await request.post('/api/projects', {
+    headers: { Origin: 'http://127.0.0.1:3100', 'Sec-Fetch-Site': 'same-origin' },
+    data: { name: 'Local request' },
+  });
+  expect(sameOrigin.status()).toBe(503);
+  expect(await sameOrigin.json()).toEqual({ error: 'Service unavailable' });
+  const otherLocalOrigin = await request.post('/api/projects', {
+    headers: { Origin: 'http://localhost:3100' }, data: { name: 'Different origin' },
+  });
+  expect(otherLocalOrigin.status()).toBe(403);
   const crossOrigin = await request.post('/api/projects', {
     headers: { Origin: 'https://attacker.example' }, data: { name: 'Untrusted request' },
   });
